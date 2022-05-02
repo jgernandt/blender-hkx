@@ -1,2 +1,2 @@
 # blender-hkx
-A Blender addon to import/export HKX animations
+A Blender addon to import/export HKX animations (Skyrim)
