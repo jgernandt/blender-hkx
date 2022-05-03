@@ -9,6 +9,7 @@
 #include <tchar.h>
 
 #include "Common/Base/hkBase.h"
+#include <Common/Base/System/Io/IStream/hkIStream.h>
 
 #include "Animation/Animation/hkaAnimationContainer.h"
 #include "Animation/Animation/Animation/hkaAnimation.h"

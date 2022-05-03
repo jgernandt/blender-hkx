@@ -1,7 +1,35 @@
 #include "pch.h"
-#include "AnimationBinder.h"
+#include "AnimationDecoder.h"
 
-void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& skeleton)
+#define FRAME_RATE 30
+
+//Do we really not have round? How old is this s***?
+double round(double x)
+{
+    return x >= 0.0 ? ceil(x - 0.5) : floor(x + 0.5);
+}
+float round(float x)
+{
+    return x >= 0.0f ? ceilf(x - 0.5f) : floorf(x + 0.5f);
+}
+
+void vecToRaw(const hkVector4& vec, float* raw)
+{
+	raw[0] = vec(0);
+	raw[1] = vec(1);
+	raw[2] = vec(2);
+}
+
+void quatToRaw(const hkQuaternion& q, float* raw)
+{
+	raw[0] = q(0);
+	raw[1] = q(1);
+	raw[2] = q(2);
+	raw[3] = q(3);
+}
+
+hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress(
+	const AnimationData& data, const Skeleton& skeleton)
 {
 	//Validate animation data
 	if (data.frames < 1)
@@ -39,22 +67,20 @@ void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& ske
 		raw->m_annotationTracks[i].m_trackName = "";
 
 	//Initialise binding
-	m_binding = new hkaAnimationBinding;
-	m_binding->removeReference();
-	m_binding->m_originalSkeletonName = skeleton.name.c_str();
-	m_binding->m_blendHint = 
+	hkaAnimationBinding* binding = new hkaAnimationBinding;
+	binding->m_originalSkeletonName = skeleton.name.c_str();
+	binding->m_blendHint = 
 		additive ? hkaAnimationBinding::ADDITIVE : hkaAnimationBinding::NORMAL;
 	
 	std::vector<int> dataToBoneTrack;
 	if (nBones && (unsigned int)nBones < skeleton.bones.size()) {
-		m_binding->m_transformTrackToBoneIndices.setSize(nBones);
+		binding->m_transformTrackToBoneIndices.setSize(nBones);
 		//The pedant in me wants the entries in m_transformTrackToBoneIndices 
 		//to be sorted in order (probably doesn't matter at all).
 		//This means we must provide a mapping from the indices in
 		//data.bones to track indices.
 		dataToBoneTrack.resize(nBones);
 		
-		//Sorting with good worst-case, poor best-case performance
 		std::vector<int> temp(skeleton.bones.size(), -1);
 		for (int i = 0; i < (int)data.bones.size(); i++)
 			//temp is the mapping from bone index to data index
@@ -64,7 +90,7 @@ void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& ske
 		for (int i = 0; i < (int)temp.size(); i++) {
 			//i is the bone index
 			if (temp[i] != -1) {
-				m_binding->m_transformTrackToBoneIndices[at] = i;
+				binding->m_transformTrackToBoneIndices[at] = i;
 				dataToBoneTrack[temp[i]] = at++;
 			}
 		}
@@ -72,7 +98,7 @@ void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& ske
 
 	std::vector<int> dataToFloatTrack;
 	if (nFloats && (unsigned int)nFloats < skeleton.floats.size()) {
-		m_binding->m_floatTrackToFloatSlotIndices.setSize(nFloats);
+		binding->m_floatTrackToFloatSlotIndices.setSize(nFloats);
 		//dito
 		dataToFloatTrack.resize(nFloats);
 
@@ -83,7 +109,7 @@ void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& ske
 		int at = 0;
 		for (int i = 0; i < (int)temp.size(); i++) {
 			if (temp[i] != -1) {
-				m_binding->m_floatTrackToFloatSlotIndices[at] = i;
+				binding->m_floatTrackToFloatSlotIndices[at] = i;
 				dataToFloatTrack[temp[i]] = at++;
 			}
 		}
@@ -141,5 +167,64 @@ void iohkx::AnimationBinder::bind(const AnimationData& data, const Skeleton& ske
 
 	assert(tcp.isOk());
 
-	m_binding->m_animation = new hkaSplineCompressedAnimation( *raw, tcp, acp );
+	binding->m_animation = new hkaSplineCompressedAnimation( *raw, tcp, acp );
+
+	hkRefPtr<hkaAnimationContainer> animCtnr = new hkaAnimationContainer;
+	animCtnr->removeReference();
+	animCtnr->m_bindings.pushBack(binding);
+	animCtnr->m_animations.pushBack(binding->m_animation);
+
+	return animCtnr;
+}
+
+void iohkx::AnimationDecoder::decompress(
+	hkaAnimationContainer* animCtnr, const Skeleton& skeleton, AnimationData& data)
+{
+	assert(animCtnr);
+	if (animCtnr->m_animations.getSize() == 0 || animCtnr->m_bindings.getSize() == 0)
+		throw Exception(ERR_INVALID_INPUT, "No animations");
+
+	hkaAnimation* anim = animCtnr->m_animations[0];
+	hkaAnimationBinding* binding = animCtnr->m_bindings[0];
+
+	//Transfer the basics
+	data.frames = static_cast<int>(round(anim->m_duration * FRAME_RATE)) + 1;
+	data.frameRate = FRAME_RATE;
+	bool additive = binding->m_blendHint == hkaAnimationBinding::ADDITIVE;
+	data.blendMode = additive ? "ADDITIVE" : "NORMAL";
+	data.bones.resize(anim->m_numberOfTransformTracks);
+	for (int i = 0; (unsigned int)i < data.bones.size(); i++) {
+		data.bones[i].index = binding->m_transformTrackToBoneIndices.isEmpty() ? 
+			i : binding->m_transformTrackToBoneIndices[i];
+		data.bones[i].keys.resize(data.frames);
+	}
+	data.floats.resize(anim->m_numberOfFloatTracks);
+	for (int i = 0; (unsigned int)i < data.floats.size(); i++) {
+		data.floats[i].index = binding->m_floatTrackToFloatSlotIndices.isEmpty() ? 
+			i : binding->m_floatTrackToFloatSlotIndices[i];
+		data.floats[i].keys.resize(data.frames);
+	}
+
+	//Check that we have the right skeleton
+	if (strcmp(binding->m_originalSkeletonName.cString(), skeleton.name.c_str()) != 0)
+		throw Exception(ERR_INVALID_INPUT, "Mismatched skeleton");
+
+	data.skeleton = &skeleton;
+
+	//Sample animation and transfer keys
+	hkArray<hkQsTransform> tmpT(data.bones.size());
+	hkArray<hkReal> tmpF(data.floats.size());
+	for (int f = 0; f < data.frames; f++) {
+		anim->sampleTracks((float)f / FRAME_RATE, tmpT.begin(), tmpF.begin(), HK_NULL);
+		hkaSkeletonUtils::normalizeRotations(tmpT.begin(), tmpT.getSize());
+
+		for (unsigned int i = 0; i < data.bones.size(); i++) {
+			vecToRaw(tmpT[i].getTranslation(), data.bones[i].keys[f].T);
+			quatToRaw(tmpT[i].getRotation(), data.bones[i].keys[f].R);
+			vecToRaw(tmpT[i].getScale(), data.bones[i].keys[f].S);
+		}
+
+		for (unsigned int i = 0; i < data.floats.size(); i++)
+			data.floats[i].keys[f] = tmpF[i];
+	}
 }

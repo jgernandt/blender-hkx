@@ -168,7 +168,7 @@
 			UniqueIdentifier="{4FC737F1-C7A5-4376-A066-2A32D752A2FF}"
 			>
 			<File
-				RelativePath=".\AnimationBinder.cpp"
+				RelativePath=".\AnimationDecoder.cpp"
 				>
 			</File>
 			<File
@@ -184,7 +184,7 @@
 				>
 			</File>
 			<File
-				RelativePath=".\HKXWriter.cpp"
+				RelativePath=".\HKXInterface.cpp"
 				>
 			</File>
 			<File
@@ -205,7 +205,7 @@
 				>
 			</File>
 			<File
-				RelativePath=".\XMLReader.cpp"
+				RelativePath=".\XMLInterface.cpp"
 				>
 			</File>
 			<Filter
@@ -231,7 +231,7 @@
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}"
 			>
 			<File
-				RelativePath=".\AnimationBinder.h"
+				RelativePath=".\AnimationDecoder.h"
 				>
 			</File>
 			<File
@@ -247,7 +247,7 @@
 				>
 			</File>
 			<File
-				RelativePath=".\HKXWriter.h"
+				RelativePath=".\HKXInterface.h"
 				>
 			</File>
 			<File
@@ -259,7 +259,7 @@
 				>
 			</File>
 			<File
-				RelativePath=".\XMLReader.h"
+				RelativePath=".\XMLInterface.h"
 				>
 			</File>
 			<Filter

@@ -8,10 +8,9 @@ namespace iohkx
 	enum ErrorCode
 	{
 		ERR_NONE,
-		ERR_RUNTIME_ERROR,
 		ERR_INVALID_ARGS,
 		ERR_INVALID_INPUT,
-		ERR_INVALID_SKELETON,
+		ERR_READ_FAIL,
 		ERR_WRITE_FAIL
 	};
 
@@ -19,7 +18,7 @@ namespace iohkx
 	{
 		Exception(int c, const char* s) : code(c), msg(s) {}
 		int code;
-		std::string msg;
+		const char* msg;
 	};
 
 	enum FileLayout
@@ -33,24 +32,6 @@ namespace iohkx
 		float T[3];
 		float R[4];
 		float S[3];
-	};
-
-	struct AnimationData
-	{
-		template<typename T>
-		struct Track
-		{
-			int index;
-			std::vector<T> keys;
-
-			Track(int i = -1) : index(i) {}
-		};
-
-		int frames;
-		int frameRate;
-		std::string blendMode;
-		std::vector<Track<Transform>> bones;
-		std::vector<Track<float>> floats;
 	};
 
 	struct Bone
@@ -76,12 +57,34 @@ namespace iohkx
 		std::string name;
 
 		std::vector<Bone*> bones;
+		//maps bone name to bone index
 		TrackMap boneIndex;
 
 		std::vector<Float> floats;
+		//maps float name to float index
 		TrackMap floatIndex;
 
 		std::vector<Bone*> rootBones;
 	};
 
+	struct AnimationData
+	{
+		template<typename T>
+		struct Track
+		{
+			//track index in skeleton
+			int index;
+			std::vector<T> keys;
+
+			Track(int i = -1) : index(i) {}
+		};
+
+		int frames;
+		int frameRate;
+		std::string blendMode;
+		std::vector<Track<Transform>> bones;
+		std::vector<Track<float>> floats;
+
+		const Skeleton* skeleton;
+	};
 }

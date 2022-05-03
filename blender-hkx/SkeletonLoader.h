@@ -7,21 +7,19 @@ namespace iohkx
 	class SkeletonLoader
 	{
 	public:
-		struct Options
-		{
-			bool loadHierarchies;
-		};
-	public:
-		SkeletonLoader(const HavokEngine& engine);
+		SkeletonLoader();
 		~SkeletonLoader();
 
-		void load(int argc, char** argv);
+		void load(hkaAnimationContainer* animCtnr);
 
 		const Skeleton& operator[](int i) const { return m_skeletons[i]; }
 		bool empty() const { return m_skeletons.empty(); }
 
 	public:
-		Options m_options;
+		struct
+		{
+			bool loadHierarchies;
+		} m_options;
 
 	private:
 		std::vector<Skeleton> m_skeletons;
