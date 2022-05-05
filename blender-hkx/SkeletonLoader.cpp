@@ -32,8 +32,10 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 	Bone* bones = new Bone[skeleton.bones.size()];
 
 	for (int i = 0; i < src->m_bones.getSize(); i++) {
+		//Store the bone pointers
 		Bone* bone = bones + i;
 		skeleton.bones[i] = bone;
+		//Set name and bind pose
 		bone->name = src->m_bones[i].m_name.cString();
 		bone->refPose = src->m_referencePose[i];
 
@@ -52,6 +54,12 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 				bone->parent->children.push_back(bone);
 			}
 		}
+	}
+	for (int i = 0; i < src->m_floatSlots.getSize(); i++) {
+		//Floats can be stored directly, no need for pointers
+		//Set name and ref value
+		skeleton.floats[i].name = src->m_floatSlots[i].cString();
+		skeleton.floats[i].refValue = src->m_referenceFloats[i];
 	}
 	
 	//Map the bones

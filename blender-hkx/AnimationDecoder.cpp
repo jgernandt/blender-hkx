@@ -243,4 +243,17 @@ void iohkx::AnimationDecoder::decompress(
 		if (clean)
 			data.bones[t].keys.resize(1);
 	}
+	for (unsigned int t = 0; t < data.floats.size(); t++) {
+		bool clean = true;
+
+		for (int f = 1; f < data.frames; f++) {
+			if (data.floats[t].keys[f] != data.floats[t].keys[f - 1]) {
+				clean = false;
+				break;
+			}
+		}
+
+		if (clean)
+			data.floats[t].keys.resize(1);
+	}
 }

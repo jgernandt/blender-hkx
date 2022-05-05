@@ -103,6 +103,15 @@ void iohkx::XMLInterface::read(const char* fileName, const Skeleton& skeleton, A
 	}
 }
 
+void appendf(pugi::xml_node node, const char* name, float val)
+{
+	char buf[16];
+	sprintf_s(buf, sizeof(buf), "%g", val);
+	xml_node child = node.append_child(TYPE_FLOAT);
+	child.append_attribute("name").set_value(name);
+	child.append_child(node_pcdata).set_value(buf);
+}
+
 void appendi(pugi::xml_node node, const char* name, int val)
 {
 	char buf[16];
@@ -210,6 +219,7 @@ void iohkx::XMLInterface::write(const AnimationData& data, const char* fileName)
 
 	//Bone tracks
 	for (unsigned int t = 0; t < data.bones.size(); t++) {
+		//Look up track in skeleton
 		Bone* bone = data.skeleton->bones[data.bones[t].index];
 		assert(bone);
 
@@ -221,6 +231,22 @@ void iohkx::XMLInterface::write(const AnimationData& data, const char* fileName)
 			char name[8];
 			sprintf_s(name, sizeof(name), "%d", f);
 			appendTransform(node, name, data.bones[t].keys[f]);
+		}
+	}
+
+	//Float tracks
+	for (unsigned int t = 0; t < data.floats.size(); t++) {
+		//Look up track in skeleton
+		const Float& flt = data.skeleton->floats[data.floats[t].index];
+
+		xml_node node = anim.append_child(NODE_TRACK);
+		node.append_attribute("name").set_value(flt.name.c_str());
+		node.append_attribute("type").set_value(TYPE_FLOAT);
+
+		for (unsigned int f = 0; f < data.floats[t].keys.size(); f++) {
+			char name[8];
+			sprintf_s(name, sizeof(name), "%d", f);
+			appendf(node, name, data.floats[t].keys[f]);
 		}
 	}
 
