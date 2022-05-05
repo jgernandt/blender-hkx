@@ -1,8 +1,33 @@
+from enum import Enum
 import xml.dom.minidom as xml
 
 import mathutils
 
 #global _implementation?
+
+TAG_ANIMATION = "animation"
+TAG_BONE = "bone"
+TAG_FLOAT = "float"
+TAG_INT = "int"
+TAG_SKELETON = "skeleton"
+TAG_STRING = "string"
+TAG_TRACK = "track"
+TAG_TRANSFORM = "transform"
+
+ATTR_FRAMES = "frames"
+ATTR_FRAMERATE = "frameRate"
+ATTR_BLENDMODE = "blendMode"
+
+VAL_ADDITIVE = "ADDITIVE"
+VAL_NORMAL = "NORMAL"
+
+class BlendMode(Enum):
+    NORMAL = VAL_NORMAL
+    ADDITIVE = VAL_ADDITIVE
+
+class Track(Enum):
+    FLOAT = TAG_FLOAT
+    TRANSFORM = TAG_TRANSFORM
 
 def unpacktransform(string):
     floats = [float(word) for word in string.split()]
@@ -15,11 +40,74 @@ def unpacktransform(string):
     
     return loc, rot, scl
 
-class AnimationInterface():
-    name: str
+
+class TransformKeyInterface():
+    frame: int
+    value: (mathutils.Vector, mathutils.Quaternion, mathutils.Vector)
     
     def __init__(self, node):
         self._node = node
+        self.frame = int(node.getAttribute("name"))
+        
+        assert len(node.childNodes) == 1, "unexpected text"
+        assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
+        
+        self.value = unpacktransform(node.firstChild.data)
+
+class FloatKeyInterface():
+    frame: int
+    value: float
+    
+    def __init__(self, node):
+        self._node = node
+        self.frame = int(node.getAttribute("name"))
+        
+        assert len(node.childNodes) == 1, "unexpected text"
+        assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
+        
+        self.value = float(node.firstChild.data)
+
+class TrackInterface():
+    name: str
+    datatype: Track
+    
+    def __init__(self, node):
+        self._node = node
+        self.name = node.getAttribute("name")
+        self.datatype = Track(node.getAttribute("type"))
+    
+    def keys(self):
+        for node in self._node.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == datatype:
+                if datatype == Track.FLOAT:
+                    yield FloatKeyInterface(node)
+                elif datatype == Track.TRANSFORM:
+                    yield TransformKeyInterface(node)
+
+class AnimationInterface():
+    frames: int
+    framerate: int
+    blendmode: BlendMode
+    
+    def __init__(self, node):
+        self._node = node
+        parent = self._node.parentNode
+        for node in parent.childNodes:
+            if node.nodeType == node.ELEMENT_NODE: 
+                if node.tagName == TAG_INT:
+                    name = node.getAttribute("name")
+                    if name == ATTR_FRAMES:
+                        self.frames = int(node.firstChild.data)
+                    elif name == ATTR_FRAMERATE:
+                        self.framerate = int(node.firstChild.data)
+                elif node.tagName == TAG_STRING:
+                    if node.getAttribute("name") == ATTR_BLENDMODE:
+                        self.blendMode = BlendMode(node.firstChild.data)
+    
+    def tracks(self):
+        for node in self._node.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRACK:
+                yield TrackInterface(node)
 
 class SkeletonInterface():
     name: str
@@ -30,12 +118,12 @@ class SkeletonInterface():
     
     def bones(self):
         for node in self._node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == "bone":
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_BONE:
                 yield SkeletonInterface(node)
     
     def refpose(self):
         for node in self._node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == "transform":
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRANSFORM:
                 assert len(node.childNodes) == 1, "unexpected text"
                 assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
                 return unpacktransform(node.firstChild.data)
@@ -57,11 +145,11 @@ class DocumentInterface():
     
     def animations(self):
         for node in self._root.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == "animation":
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_ANIMATION:
                 yield AnimationInterface(node)
     
     def skeletons(self):
         for node in self._root.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == "skeleton":
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_SKELETON:
                 yield SkeletonInterface(node)
 
