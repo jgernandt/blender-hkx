@@ -87,4 +87,26 @@ namespace iohkx
 
 		const Skeleton* skeleton;
 	};
+
+	inline bool operator==(const Transform& lhs, const Transform& rhs)
+	{
+		for (int i = 0; i < 3; i++) {
+			if (lhs.T[i] != rhs.T[i])
+				return false;
+		}
+		for (int i = 0; i < 4; i++) {
+			if (lhs.R[i] != rhs.R[i])
+				return false;
+		}
+		for (int i = 0; i < 3; i++) {
+			if (lhs.S[i] != rhs.S[i])
+				return false;
+		}
+		return true;
+	}
+	inline bool operator!=(const Transform& lhs, const Transform& rhs)
+	{
+		return !(lhs == rhs);
+	}
+
 }

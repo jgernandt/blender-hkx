@@ -227,4 +227,20 @@ void iohkx::AnimationDecoder::decompress(
 		for (unsigned int i = 0; i < data.floats.size(); i++)
 			data.floats[i].keys[f] = tmpF[i];
 	}
+
+	//Postprocess: if *every* key in a track is identical, we only need one.
+	//Worth the trouble? This is not a performance-dependent application.
+	for (unsigned int t = 0; t < data.bones.size(); t++) {
+		bool clean = true;
+
+		for (int f = 1; f < data.frames; f++) {
+			if (data.bones[t].keys[f] != data.bones[t].keys[f - 1]) {
+				clean = false;
+				break;
+			}
+		}
+
+		if (clean)
+			data.bones[t].keys.resize(1);
+	}
 }

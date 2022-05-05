@@ -2,24 +2,27 @@
 #include "XMLInterface.h"
 
 const char* NODE_FILE = "blender-hkx";
-const char* NODE_ANIMATION = "clip";
+
 const char* NODE_SKELETON = "skeleton";
 const char* NODE_BONE = "bone";
-const char* NODE_KEY = "key";
+
+const char* NODE_ANIMATION = "animation";
+const char* NODE_TRACK = "track";
 
 const char* TYPE_INT = "int";
 const char* TYPE_FLOAT = "float";
 const char* TYPE_STRING = "string";
 const char* TYPE_VEC3 = "vec3";
 const char* TYPE_VEC4 = "vec4";
+const char* TYPE_TRANSFORM = "transform";
 
 const char* ATTR_FRAMES = "frames";
 const char* ATTR_FRAMERATE = "frameRate";
 const char* ATTR_BLENDMODE = "blendMode";
 const char* ATTR_SKELETON = "skeleton";
-const char* ATTR_T = "translation";
-const char* ATTR_R = "rotation";
-const char* ATTR_S = "scale";
+const char* ATTR_REFPOSE = "refPose";
+const char* ATTR_FRAME = "frame";
+
 
 using namespace iohkx;
 using namespace pugi;
@@ -84,11 +87,11 @@ void iohkx::XMLInterface::read(const char* fileName, const Skeleton& skeleton, A
 
 					//we expect one key per frame
 					data.bones.back().keys.reserve(data.frames);
-					for (xml_node key = bone.child(NODE_KEY); key; key = key.next_sibling(NODE_KEY)) {
+					for (xml_node key = bone.child("key"); key; key = key.next_sibling("key")) {
 						data.bones.back().keys.push_back(Transform());
-						strToVec(key.child(ATTR_T).child_value(), data.bones.back().keys.back().T, 3);
-						strToVec(key.child(ATTR_R).child_value(), data.bones.back().keys.back().R, 4);
-						strToVec(key.child(ATTR_S).child_value(), data.bones.back().keys.back().S, 3);
+						strToVec(key.child("translation").child_value(), data.bones.back().keys.back().T, 3);
+						strToVec(key.child("rotation").child_value(), data.bones.back().keys.back().R, 4);
+						strToVec(key.child("scale").child_value(), data.bones.back().keys.back().S, 3);
 					}
 					if (data.bones.back().keys.size() != data.frames)
 						throw Exception(ERR_INVALID_INPUT, "Missing keys");
@@ -127,33 +130,43 @@ void appendv3(pugi::xml_node node, const char* name, const float* vals)
 
 void appendv4(pugi::xml_node node, const char* name, const float* vals)
 {
-	char buf[64];
+	char buf[65];
 	sprintf_s(buf, sizeof(buf), "(%g, %g, %g, %g)", vals[0], vals[1], vals[2], vals[3]);
 	xml_node child = node.append_child(TYPE_VEC4);
 	child.append_attribute("name").set_value(name);
 	child.append_child(node_pcdata).set_value(buf);
 }
 
-void appendTransform(pugi::xml_node node, const hkQsTransform& val)
+void appendTransform(pugi::xml_node node, const char* name, const hkQsTransform& val)
 {
-	char buf[64];
+	char buf[256];
+	int i = 0;
 
 	hkVector4 v = val.getTranslation();
-	sprintf_s(buf, sizeof(buf), "(%g, %g, %g)", v(0), v(1), v(2));
-	xml_node child = node.append_child(TYPE_VEC3);
-	child.append_attribute("name").set_value(ATTR_T);
-	child.append_child(node_pcdata).set_value(buf);
+	i += sprintf_s(buf, sizeof(buf), "%g %g %g", v(0), v(1), v(2));
 
 	hkQuaternion q = val.getRotation();
-	sprintf_s(buf, sizeof(buf), "(%g, %g, %g, %g)", q(0), q(1), q(2), q(3));
-	child = node.append_child(TYPE_VEC4);
-	child.append_attribute("name").set_value(ATTR_R);
-	child.append_child(node_pcdata).set_value(buf);
+	i += sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g %g", q(0), q(1), q(2), q(3));
 
 	v = val.getScale();
-	sprintf_s(buf, sizeof(buf), "(%g, %g, %g)", v(0), v(1), v(2));
-	child = node.append_child(TYPE_VEC3);
-	child.append_attribute("name").set_value(ATTR_S);
+	sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g", v(0), v(1), v(2));
+
+	xml_node child = node.append_child(TYPE_TRANSFORM);
+	child.append_attribute("name").set_value(name);
+	child.append_child(node_pcdata).set_value(buf);
+}
+
+void appendTransform(pugi::xml_node node, const char* name, const Transform& val)
+{
+	char buf[256];
+	int i = 0;
+
+	i += sprintf_s(buf, sizeof(buf), "%g %g %g", val.T[0], val.T[1], val.T[2]);
+	i += sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g %g", val.R[0], val.R[1], val.R[2], val.R[3]);
+	sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g", val.S[0], val.S[1], val.S[2]);
+
+	xml_node child = node.append_child(TYPE_TRANSFORM);
+	child.append_attribute("name").set_value(name);
 	child.append_child(node_pcdata).set_value(buf);
 }
 
@@ -163,7 +176,7 @@ void appendBone(pugi::xml_node node, Bone* bone)
 	xml_node child = node.append_child(NODE_BONE);
 	child.append_attribute("name").set_value(bone->name.c_str());
 
-	appendTransform(child, bone->refPose);
+	appendTransform(child, ATTR_REFPOSE, bone->refPose);
 
 	for (unsigned int i = 0; i < bone->children.size(); i++)
 		appendBone(child, bone->children[i]);
@@ -200,16 +213,14 @@ void iohkx::XMLInterface::write(const AnimationData& data, const char* fileName)
 		Bone* bone = data.skeleton->bones[data.bones[t].index];
 		assert(bone);
 
-		xml_node node = anim.append_child(NODE_BONE);
+		xml_node node = anim.append_child(NODE_TRACK);
 		node.append_attribute("name").set_value(bone->name.c_str());
+		node.append_attribute("type").set_value(TYPE_TRANSFORM);
 
-		for (int f = 0; f < data.frames; f++) {
-			assert(f < data.bones[t].keys.size());
-
-			xml_node key = node.append_child(NODE_KEY);
-			appendv3(key, ATTR_T, data.bones[t].keys[f].T);
-			appendv4(key, ATTR_R, data.bones[t].keys[f].R);
-			appendv3(key, ATTR_S, data.bones[t].keys[f].S);
+		for (unsigned int f = 0; f < data.bones[t].keys.size(); f++) {
+			char name[8];
+			sprintf_s(name, sizeof(name), "%d", f);
+			appendTransform(node, name, data.bones[t].keys[f]);
 		}
 	}
 
