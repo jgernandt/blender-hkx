@@ -1,9 +1,9 @@
 import bpy
 
 class ArmatureProperties(bpy.types.PropertyGroup):
-    skeleton_file: bpy.props.StringProperty(
+    skeleton_path: bpy.props.StringProperty(
         name="Skeleton",
-        description="Path to the Havok skeleton file",
+        description="Path to the HKX skeleton file",
         subtype='FILE_PATH')
 
 class ArmaturePanel(bpy.types.Panel):
@@ -19,14 +19,14 @@ class ArmaturePanel(bpy.types.Panel):
         return (context.object and context.object.type == 'ARMATURE')
     
     def draw(self, context):
-        self.layout.prop(context.object.data.io_hkx, "skeleton_file")
+        self.layout.prop(context.object.data.iohkx, "skeleton_path")
 
 def register():
     bpy.utils.register_class(ArmatureProperties)
     bpy.utils.register_class(ArmaturePanel)
-    bpy.types.Armature.io_hkx = bpy.props.PointerProperty(type=ArmatureProperties)
+    bpy.types.Armature.iohkx = bpy.props.PointerProperty(type=ArmatureProperties)
 
 def unregister():
-    del bpy.types.Armature.io_hkx
+    del bpy.types.Armature.iohkx
     bpy.utils.unregister_class(ArmaturePanel)
     bpy.utils.unregister_class(ArmatureProperties)
