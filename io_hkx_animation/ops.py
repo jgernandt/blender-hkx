@@ -61,6 +61,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
     )
     
     hktoblender: mathutils.Matrix
+    hktoblenderinv : mathutils.Matrix
     
     def invoke(self, context, event):
         #set skeleton_path to the path of the active armature (default if none)
@@ -81,6 +82,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #this throws if axes are invalid
             self.hktoblender = axis_conversion(
                 from_forward=self.bone_forward, from_up=self.bone_up).to_4x4()
+            self.hktoblenderinv = self.hktoblender.transposed()
             
             #Set fps to 30 (and warn if it wasn't)
             if context.scene.render.fps != SAMPLING_RATE:
@@ -145,11 +147,64 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         return {'FINISHED'}
     
-    def importfloat(self, itrack, action):
-        print("importing float track " + itrack.name)
+    def importfloat(self, itrack, action, armature):
+        pass
     
-    def importtransform(self, itrack, action):
-        print("importing bone track " + itrack.name)
+    def importtransform(self, itrack, action, armature):
+        bone = armature.pose.bones[itrack.name]
+        assert bone, "unknown track encountered"
+        
+        #create ActionGroup
+        group = action.groups.new(itrack.name)
+        
+        #create new f-curves
+        loc_x = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=0, action_group=itrack.name)
+        loc_y = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=1, action_group=itrack.name)
+        loc_z = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=2, action_group=itrack.name)
+        
+        rot_w = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=0, action_group=itrack.name)
+        rot_x = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=1, action_group=itrack.name)
+        rot_y = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=2, action_group=itrack.name)
+        rot_z = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=3, action_group=itrack.name)
+        
+        scl_x = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=0, action_group=itrack.name)
+        scl_y = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=1, action_group=itrack.name)
+        scl_z = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=2, action_group=itrack.name)
+        
+        for key in itrack.keys():
+            #do axis and scale conversion
+            loc, rot, scl = key.value
+            loc /= self.length_scale
+            mat = mathutils.Matrix.LocRotScale(loc, rot, scl).to_4x4()
+            mat = self.hktoblenderinv @ mat @ self.hktoblender
+            loc, rot, scl = mat.decompose()
+            
+            #insert keyframes
+            loc_x.keyframe_points.insert(key.frame, loc[0], options={'FAST'})
+            loc_y.keyframe_points.insert(key.frame, loc[1], options={'FAST'})
+            loc_z.keyframe_points.insert(key.frame, loc[2], options={'FAST'})
+            
+            rot_w.keyframe_points.insert(key.frame, rot[0], options={'FAST'})
+            rot_x.keyframe_points.insert(key.frame, rot[1], options={'FAST'})
+            rot_y.keyframe_points.insert(key.frame, rot[2], options={'FAST'})
+            rot_z.keyframe_points.insert(key.frame, rot[3], options={'FAST'})
+            
+            scl_x.keyframe_points.insert(key.frame, scl[0], options={'FAST'})
+            scl_y.keyframe_points.insert(key.frame, scl[1], options={'FAST'})
+            scl_z.keyframe_points.insert(key.frame, scl[2], options={'FAST'})
+        
+        loc_x.update()
+        loc_y.update()
+        loc_z.update()
+        
+        rot_w.update()
+        rot_x.update()
+        rot_y.update()
+        rot_z.update()
+        
+        scl_x.update()
+        scl_y.update()
+        scl_z.update()
     
     def importanimation(self, ianim, context):
         assert ianim.framerate == 30, "unexpected framrate"
@@ -162,11 +217,12 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         action = bpy.data.actions.new(name=root)
         armature.animation_data.action = action
         
+        #import the tracks
         for track in ianim.tracks():
             if track.datatype == Track.TRANSFORM:
-                self.importtransform(track, action)
+                self.importtransform(track, action, armature)
             elif track.datatype == Track.FLOAT:
-                self.importfloat(track, action)
+                self.importfloat(track, action, armature)
         
         return action
     
@@ -206,9 +262,10 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         mat = mathutils.Matrix.LocRotScale(loc, rot, scl)
         if parent:
             bone.parent = parent
-            bone.matrix = parent.matrix @ mat
-        else:
-            bone.matrix = mat
+            #bone.matrix = parent.matrix @ mat
+        #else:
+            #bone.matrix = mat
+        bone.matrix = mat
         
         #recurse
         children = [self.importbone(i, bone, armature) for i in ibone.bones()]

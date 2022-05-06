@@ -34,8 +34,7 @@ def unpacktransform(string):
     assert len(floats) == 10, "invalid transform data"
     
     loc = mathutils.Vector(floats[0:3])
-    #Havok has scalar last!
-    rot = mathutils.Quaternion([floats[6], floats[3], floats[4], floats[5]])
+    rot = mathutils.Quaternion(floats[3:7])
     scl = mathutils.Vector(floats[7:10])
     
     return loc, rot, scl
@@ -47,12 +46,14 @@ class TransformKeyInterface():
     
     def __init__(self, node):
         self._node = node
-        self.frame = int(node.getAttribute("name"))
+        #start counting frames at 1
+        self.frame = int(node.getAttribute("name")) + 1
         
         assert len(node.childNodes) == 1, "unexpected text"
         assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
         
         self.value = unpacktransform(node.firstChild.data)
+
 
 class FloatKeyInterface():
     frame: int
@@ -60,12 +61,14 @@ class FloatKeyInterface():
     
     def __init__(self, node):
         self._node = node
-        self.frame = int(node.getAttribute("name"))
+        #start counting frames at 1
+        self.frame = int(node.getAttribute("name")) + 1
         
         assert len(node.childNodes) == 1, "unexpected text"
         assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
         
         self.value = float(node.firstChild.data)
+
 
 class TrackInterface():
     name: str
@@ -78,11 +81,12 @@ class TrackInterface():
     
     def keys(self):
         for node in self._node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == datatype:
-                if datatype == Track.FLOAT:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == self.datatype.value:
+                if self.datatype == Track.FLOAT:
                     yield FloatKeyInterface(node)
-                elif datatype == Track.TRANSFORM:
+                elif self.datatype == Track.TRANSFORM:
                     yield TransformKeyInterface(node)
+
 
 class AnimationInterface():
     frames: int
@@ -104,10 +108,16 @@ class AnimationInterface():
                     if node.getAttribute("name") == ATTR_BLENDMODE:
                         self.blendMode = BlendMode(node.firstChild.data)
     
+    def find(self, trackname):
+        for node in self._node.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRACK and node.getAttribute("name") == trackname:
+                return TrackInterface(node)
+    
     def tracks(self):
         for node in self._node.childNodes:
             if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRACK:
                 yield TrackInterface(node)
+
 
 class SkeletonInterface():
     name: str
