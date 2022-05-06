@@ -155,7 +155,8 @@ void appendTransform(pugi::xml_node node, const char* name, const hkQsTransform&
 	i += sprintf_s(buf, sizeof(buf), "%g %g %g", v(0), v(1), v(2));
 
 	hkQuaternion q = val.getRotation();
-	i += sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g %g", q(0), q(1), q(2), q(3));
+	//print Blender format
+	i += sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g %g", q(3), q(0), q(1), q(2));
 
 	v = val.getScale();
 	sprintf_s(buf + i, sizeof(buf) - i, " %g %g %g", v(0), v(1), v(2));
@@ -185,7 +186,7 @@ void appendBone(pugi::xml_node node, Bone* bone)
 	xml_node child = node.append_child(NODE_BONE);
 	child.append_attribute("name").set_value(bone->name.c_str());
 
-	appendTransform(child, ATTR_REFPOSE, bone->refPose);
+	appendTransform(child, ATTR_REFPOSE, bone->refPoseObj);
 
 	for (unsigned int i = 0; i < bone->children.size(); i++)
 		appendBone(child, bone->children[i]);

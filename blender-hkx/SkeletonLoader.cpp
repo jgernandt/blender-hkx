@@ -35,24 +35,27 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 		//Store the bone pointers
 		Bone* bone = bones + i;
 		skeleton.bones[i] = bone;
-		//Set name and bind pose
+		//Set name, index and bind pose
+		bone->index = i;
 		bone->name = src->m_bones[i].m_name.cString();
 		bone->refPose = src->m_referencePose[i];
+		bone->refPoseObj = src->m_referencePose[i];
 
-		if (m_options.loadHierarchies) {
-			int parent = src->m_parentIndices[i];
-			//The children always come after their parents, right?
-			//Otherwise, we'll just have to do this in a separate loop. No big deal.
-			assert(parent < i);
+		int parent = src->m_parentIndices[i];
+		//The children always come after their parents, right?
+		//Otherwise, we'll just have to do this in a separate loop. No big deal.
+		assert(parent < i);
 
-			if (parent == -1) {
-				bone->parent = NULL;
-				skeleton.rootBones.push_back(bone);
-			}
-			else {
-				bone->parent = skeleton.bones[parent];
-				bone->parent->children.push_back(bone);
-			}
+		if (parent == -1) {
+			bone->parent = NULL;
+			skeleton.rootBones.push_back(bone);
+		}
+		else {
+			bone->parent = skeleton.bones[parent];
+			bone->parent->children.push_back(bone);
+
+			//convert transform to object space (Blender style)
+			bone->refPoseObj.setMul(bone->parent->refPoseObj, bone->refPoseObj);
 		}
 	}
 	for (int i = 0; i < src->m_floatSlots.getSize(); i++) {

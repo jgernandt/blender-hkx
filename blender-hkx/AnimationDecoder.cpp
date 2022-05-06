@@ -3,6 +3,8 @@
 
 #define FRAME_RATE 30
 
+using namespace iohkx;
+
 //Do we really not have round? How old is this s***?
 double round(double x)
 {
@@ -13,19 +15,29 @@ float round(float x)
     return x >= 0.0f ? ceilf(x - 0.5f) : floorf(x + 0.5f);
 }
 
-void vecToRaw(const hkVector4& vec, float* raw)
+static inline hkVector4 rawToVec(const float* raw)
+{
+	return hkVector4(raw[0], raw[1], raw[2]);
+}
+
+static inline hkQuaternion rawToQuat(const float* raw)
+{
+	return hkQuaternion(raw[1], raw[2], raw[3], raw[0]);
+}
+
+static inline void vecToRaw(const hkVector4& vec, float* raw)
 {
 	raw[0] = vec(0);
 	raw[1] = vec(1);
 	raw[2] = vec(2);
 }
 
-void quatToRaw(const hkQuaternion& q, float* raw)
+static inline void quatToRaw(const hkQuaternion& q, float* raw)
 {
-	raw[0] = q(0);
-	raw[1] = q(1);
-	raw[2] = q(2);
-	raw[3] = q(3);
+	raw[0] = q(3);
+	raw[1] = q(0);
+	raw[2] = q(1);
+	raw[3] = q(2);
 }
 
 hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress(
@@ -193,16 +205,36 @@ void iohkx::AnimationDecoder::decompress(
 	bool additive = binding->m_blendHint == hkaAnimationBinding::ADDITIVE;
 	data.blendMode = additive ? "ADDITIVE" : "NORMAL";
 	data.bones.resize(anim->m_numberOfTransformTracks);
+
+	//Set track-to-bone index
 	for (int i = 0; (unsigned int)i < data.bones.size(); i++) {
 		data.bones[i].index = binding->m_transformTrackToBoneIndices.isEmpty() ? 
 			i : binding->m_transformTrackToBoneIndices[i];
 		data.bones[i].keys.resize(data.frames);
 	}
+	//Set track-to-float index
 	data.floats.resize(anim->m_numberOfFloatTracks);
 	for (int i = 0; (unsigned int)i < data.floats.size(); i++) {
 		data.floats[i].index = binding->m_floatTrackToFloatSlotIndices.isEmpty() ? 
 			i : binding->m_floatTrackToFloatSlotIndices[i];
 		data.floats[i].keys.resize(data.frames);
+	}
+
+	//Set bone-to-track index (if required)
+	if (data.bones.size() < skeleton.bones.size()) {
+
+		data.boneToTrack.resize(skeleton.bones.size(), -1);
+
+		for (int i = 0; (unsigned int)i < data.bones.size(); i++)
+			data.boneToTrack[data.bones[i].index] = i;
+	}
+	//Set float-to-track index (if required)
+	if (data.floats.size() < skeleton.floats.size()) {
+
+		data.floatToTrack.resize(skeleton.floats.size(), -1);
+
+		for (int i = 0; (unsigned int)i < data.floats.size(); i++)
+			data.floatToTrack[data.floats[i].index] = i;
 	}
 
 	//Check that we have the right skeleton
@@ -216,6 +248,15 @@ void iohkx::AnimationDecoder::decompress(
 	hkArray<hkReal> tmpF(data.floats.size());
 	for (int f = 0; f < data.frames; f++) {
 		anim->sampleTracks((float)f / FRAME_RATE, tmpT.begin(), tmpF.begin(), HK_NULL);
+
+		for (unsigned int i = 0; i < data.bones.size(); i++) {
+			//convert to bone-space,
+			//=inverse of parent-space ref pose * sample pose
+			hkQsTransform inv;
+			inv.setInverse(skeleton.bones[data.bones[i].index]->refPose);
+			tmpT[i].setMul(inv, tmpT[i]);
+		}
+
 		hkaSkeletonUtils::normalizeRotations(tmpT.begin(), tmpT.getSize());
 
 		for (unsigned int i = 0; i < data.bones.size(); i++) {

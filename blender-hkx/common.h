@@ -36,9 +36,12 @@ namespace iohkx
 
 	struct Bone
 	{
+		int index;
 		std::string name;
 		//parent-space rest pose
 		hkQsTransform refPose;
+		//object-space rest pose
+		hkQsTransform refPoseObj;
 
 		Bone* parent;
 		std::vector<Bone*> children;
@@ -84,6 +87,9 @@ namespace iohkx
 		std::string blendMode;
 		std::vector<Track<Transform>> bones;
 		std::vector<Track<float>> floats;
+
+		std::vector<int> boneToTrack;
+		std::vector<int> floatToTrack;
 
 		const Skeleton* skeleton;
 	};
