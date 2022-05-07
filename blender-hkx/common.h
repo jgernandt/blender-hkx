@@ -40,6 +40,8 @@ namespace iohkx
 		Bone* parent;
 		std::vector<Bone*> children;
 	};
+	static_assert(offsetof(Bone, refPose) % 16 == 0, "Misaligned hkQsTransform");
+	static_assert(offsetof(Bone, refPoseObj) % 16 == 0, "Misaligned hkQsTransform");
 
 	//Don't need to be on the heap, but do it for consistency
 	struct Float

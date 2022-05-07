@@ -119,3 +119,24 @@ int _tmain(int argc, _TCHAR** argv)
 	}
 	return 0;
 }
+
+#if _MSC_VER >= 1900
+
+//__iob_func is called from Havok, but it no longer exists.
+//The FILE struct that it returns has also changed, so it
+//won't even make sense to try to find one and return it.
+// (https://stackoverflow.com/a/34655235 for details)
+// 
+//We just provide a dummy definition to satisfy the linker and let the program
+//crash and burn if it ever gets called (fingers crossed).
+
+#ifdef __cplusplus
+extern "C"
+#endif
+FILE* __cdecl __iob_func(unsigned i) 
+{
+	assert(false);
+	return nullptr;
+}
+
+#endif

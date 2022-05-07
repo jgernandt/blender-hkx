@@ -5,16 +5,6 @@
 
 using namespace iohkx;
 
-//Do we really not have round? How old is this s***?
-double round(double x)
-{
-    return x >= 0.0 ? ceil(x - 0.5) : floor(x + 0.5);
-}
-float round(float x)
-{
-    return x >= 0.0f ? ceilf(x - 0.5f) : floorf(x + 0.5f);
-}
-
 static inline hkVector4 rawToVec(const float* raw)
 {
 	return hkVector4(raw[0], raw[1], raw[2]);
@@ -239,7 +229,7 @@ void iohkx::AnimationDecoder::decompress(
 		return;
 
 	//Set frame count, framerate, blend mode
-	m_data.frames = static_cast<int>(round(anim->m_duration * FRAME_RATE)) + 1;
+	m_data.frames = static_cast<int>(std::round(anim->m_duration * FRAME_RATE)) + 1;
 	m_data.frameRate = FRAME_RATE;
 	bool additive = binding->m_blendHint == hkaAnimationBinding::ADDITIVE;
 	m_data.blendMode = additive ? "ADDITIVE" : "NORMAL";
