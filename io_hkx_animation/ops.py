@@ -103,8 +103,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #If nothing is selected or active object is not an Armature, create a new one
             selected = context.view_layer.objects.selected
             active_obj = context.view_layer.objects.active
-            #In case setting active fails (see below)
-            armature = None
             if len(selected) == 0 or not active_obj or active_obj.type != 'ARMATURE':
                 #switch to object mode (not strictly required?)
                 if bpy.ops.object.mode_set.poll():
@@ -120,23 +118,34 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                     raise RuntimeError("File contains no skeletons")
                 
                 #select and make active
-                armature = armatures[0]
-                armature.select_set(True)
+                for arma in armatures:
+                    arma.select_set(True)
                 #If previously active object is excluded from the view layer, setting active fails.
                 #No idea why. Fringe case, though. Move on.
-                context.view_layer.objects.active = armature
+                context.view_layer.objects.active = armatures[0]
                 
             else:
-                armature = active_obj
+                raise RuntimeError("TODO: import onto selected armatures")
             
             #add animation data if missing
-            if not armature.animation_data:
-                armature.animation_data_create()
+            for arma in armatures:
+                if not arma.animation_data:
+                    arma.animation_data_create()
                 
             #create new actions
             actions = [self.importanimation(i, context) for i in doc.animations()]
             
+            #If there is one armature but two actions, we should duplicate the armature
+            #(the opposite should be impossible).
+            while len(actions) > len(armatures):
+                #append a duplicate of armature[0]
+                armatures.append(armatures[0].copy())
+                armatures[-1].data = armatures[-1].data.copy()
+                context.scene.collection.objects.link(armatures[-1])
             
+            #Then assign the actions
+            for arma, acti in zip(armatures, actions):
+                arma.animation_data.action = acti
             
             
         except Exception as e:
@@ -147,12 +156,12 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         return {'FINISHED'}
     
-    def importfloat(self, itrack, action, armature):
+    def importfloat(self, itrack, action):
         pass
     
-    def importtransform(self, itrack, action, armature):
-        bone = armature.pose.bones[itrack.name]
-        assert bone, "unknown track encountered"
+    def importtransform(self, itrack, action):
+        #bone = armature.pose.bones[itrack.name]
+        #assert bone, "unknown track encountered"
         
         #create ActionGroup
         group = action.groups.new(itrack.name)
@@ -209,20 +218,20 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
     def importanimation(self, ianim, context):
         assert ianim.framerate == 30, "unexpected framrate"
         #We expect the only selected object(s) to be the armature(s) that we created.
-        armature = context.view_layer.objects.active
+        #armature = context.view_layer.objects.active
         
         #create a new action, named as file
         d, name = os.path.split(self.filepath)
         root, ext = os.path.splitext(name)
         action = bpy.data.actions.new(name=root)
-        armature.animation_data.action = action
+        #armature.animation_data.action = action
         
         #import the tracks
         for track in ianim.tracks():
             if track.datatype == Track.TRANSFORM:
-                self.importtransform(track, action, armature)
+                self.importtransform(track, action)
             elif track.datatype == Track.FLOAT:
-                self.importfloat(track, action, armature)
+                self.importfloat(track, action)
         
         return action
     

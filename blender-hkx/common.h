@@ -27,13 +27,7 @@ namespace iohkx
 		LAYOUT_AMD64
 	};
 
-	struct Transform
-	{
-		float T[3];
-		float R[4];
-		float S[3];
-	};
-
+	//Need to be on the heap for refs to work
 	struct Bone
 	{
 		int index;
@@ -47,51 +41,71 @@ namespace iohkx
 		std::vector<Bone*> children;
 	};
 
+	//Don't need to be on the heap, but do it for consistency
 	struct Float
 	{
+		int index;
 		std::string name;
 		float refValue;
 	};
 
-	typedef std::map<std::string, int> TrackMap;
+	typedef std::map<std::string, int> NameMap;
 
 	struct Skeleton
 	{
 		std::string name;
 
-		std::vector<Bone*> bones;
+		int nBones;
+		Bone* bones;
 		//maps bone name to bone index
-		TrackMap boneIndex;
+		NameMap boneIndex;
 
-		std::vector<Float> floats;
+		int nFloats;
+		Float* floats;
 		//maps float name to float index
-		TrackMap floatIndex;
+		NameMap floatIndex;
 
-		std::vector<Bone*> rootBones;
+		Bone* rootBone;
+	};
+
+	struct BoneTrack
+	{
+		const Bone* target;
+		hkArray<hkQsTransform> keys;
+	};
+
+	struct FloatTrack
+	{
+		const Float* target;
+		hkArray<hkReal> keys;
+	};
+
+	struct Clip
+	{
+		const Skeleton* skeleton;
+
+		int nBoneTracks;
+		BoneTrack* boneTracks;
+
+		int nFloatTracks;
+		FloatTrack* floatTracks;
 	};
 
 	struct AnimationData
 	{
-		template<typename T>
-		struct Track
-		{
-			//track index in skeleton
-			int index;
-			std::vector<T> keys;
-
-			Track(int i = -1) : index(i) {}
-		};
-
 		int frames;
 		int frameRate;
 		std::string blendMode;
-		std::vector<Track<Transform>> bones;
-		std::vector<Track<float>> floats;
 
-		std::vector<int> boneToTrack;
-		std::vector<int> floatToTrack;
+		std::vector<Clip> clips;
+	};
 
-		const Skeleton* skeleton;
+	//Unused
+	struct Transform
+	{
+		float T[3];
+		float R[4];
+		float S[3];
 	};
 
 	inline bool operator==(const Transform& lhs, const Transform& rhs)

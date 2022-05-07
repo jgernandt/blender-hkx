@@ -28,29 +28,27 @@ void unpack(int argc, char* const* argv)
 		HKXInterface hkx;
 
 		std::cout << "---SkeletonLoader starting---\n";
-		SkeletonLoader skeleton;
-		skeleton.m_options.loadHierarchies = true;
+		SkeletonLoader skeletons;
 
 		for (int i = 0; i < argc - 2; i++) {
 			hkRefPtr<hkaAnimationContainer> res = hkx.load(argv[i + 2]);
 			if (res)
-				skeleton.load(res.val());
+				skeletons.load(res.val());
 		}
-		if (skeleton.empty())
+		if (skeletons.empty())
 			throw Exception(ERR_INVALID_INPUT, "No skeleton found");
 		std::cout << "---SkeletonLoader finished---\n";
 
 		hkRefPtr<hkaAnimationContainer> anim = hkx.load(argv[0]);
-		AnimationData data;
 
 		std::cout << "---AnimationDecoder starting---\n";
-		AnimationDecoder decoder;
-		decoder.decompress(anim, skeleton[0], data);
+		AnimationDecoder animation;
+		animation.decompress(anim, skeletons.get());
 		std::cout << "---AnimationDecoder finished---\n";
 
 		std::cout << "---XMLInterface starting---\n";
 		XMLInterface xml;
-		xml.write(data, argv[1]);
+		xml.write(animation.get(), argv[1]);
 		std::cout << "---XMLInterface finished---\n";
 	}
 	else
@@ -59,6 +57,7 @@ void unpack(int argc, char* const* argv)
 
 void pack(int argc, char* const* argv)
 {
+	/*
 	//args
 	//1. input xml
 	//2. output file name
@@ -69,7 +68,6 @@ void pack(int argc, char* const* argv)
 
 		std::cout << "---SkeletonLoader starting---\n";
 		SkeletonLoader skeleton;
-		skeleton.m_options.loadHierarchies = false;
 
 		for (int i = 0; i < argc - 2; i++) {
 			hkRefPtr<hkaAnimationContainer> res = hkx.load(argv[i + 2]);
@@ -97,6 +95,7 @@ void pack(int argc, char* const* argv)
 	}
 	else
 		throw Exception(ERR_INVALID_ARGS, "Missing arguments");
+	*/
 }
 
 int _tmain(int argc, _TCHAR** argv)

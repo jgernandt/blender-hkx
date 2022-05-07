@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "XMLInterface.h"
 
+#define DATA_VERSION 1
+
 const char* NODE_FILE = "blender-hkx";
 
 const char* NODE_SKELETON = "skeleton";
@@ -50,6 +52,7 @@ static void vecToStr(const float* vec, char**)
 
 void iohkx::XMLInterface::read(const char* fileName, const Skeleton& skeleton, AnimationData& data)
 {
+	/*
 	xml_document doc;
 	xml_parse_result result = doc.load_file(fileName);
 	if (result.status != status_ok) {
@@ -101,6 +104,7 @@ void iohkx::XMLInterface::read(const char* fileName, const Skeleton& skeleton, A
 		else
 			throw Exception(ERR_INVALID_INPUT, "Unknown version");
 	}
+	*/
 }
 
 void appendf(pugi::xml_node node, const char* name, float val)
@@ -192,62 +196,83 @@ void appendBone(pugi::xml_node node, Bone* bone)
 		appendBone(child, bone->children[i]);
 }
 
-void iohkx::XMLInterface::write(const AnimationData& data, const char* fileName)
+void iohkx::XMLInterface::write(
+	const AnimationData& data, const char* fileName)
 {
 	xml_document doc;
+	//Add declaration
 	xml_node decl = doc.append_child(node_declaration);
 	decl.append_attribute("version").set_value("1.0");
 	decl.append_attribute("encoding").set_value("UTF-8");
 
+	//Add root element
 	xml_node root = doc.append_child(NODE_FILE);
-	root.append_attribute("version").set_value(1);
+	root.append_attribute("version").set_value(DATA_VERSION);
 
+	//Add shared attributes
 	appendi(root, ATTR_FRAMES, data.frames);
 	appendi(root, ATTR_FRAMERATE, data.frameRate);
 	appends(root, ATTR_BLENDMODE, data.blendMode.c_str());
 
-	assert(data.skeleton);
+	//Add skeleton elements
+	std::vector<const Skeleton*> addedSkeletons;
+	for (unsigned int i = 0; i < data.clips.size(); i++) {
+		//reject duplicates
+		if (std::find(
+			addedSkeletons.begin(), 
+			addedSkeletons.end(), 
+			data.clips[i].skeleton) != addedSkeletons.end())
+			continue;
+		addedSkeletons.push_back(data.clips[i].skeleton);
 
-	//Skeleton
-	xml_node skeleton = root.append_child(NODE_SKELETON);
-	skeleton.append_attribute("name").set_value(data.skeleton->name.c_str());
-	
-	for (unsigned int i = 0; i < data.skeleton->rootBones.size(); i++)
-		appendBone(skeleton, data.skeleton->rootBones[i]);
-
-	xml_node anim = root.append_child(NODE_ANIMATION);
-	appends(anim, ATTR_SKELETON, data.skeleton->name.c_str());
-
-	//Bone tracks
-	for (unsigned int t = 0; t < data.bones.size(); t++) {
-		//Look up track in skeleton
-		Bone* bone = data.skeleton->bones[data.bones[t].index];
-		assert(bone);
-
-		xml_node node = anim.append_child(NODE_TRACK);
-		node.append_attribute("name").set_value(bone->name.c_str());
-		node.append_attribute("type").set_value(TYPE_TRANSFORM);
-
-		for (unsigned int f = 0; f < data.bones[t].keys.size(); f++) {
-			char name[8];
-			sprintf_s(name, sizeof(name), "%d", f);
-			appendTransform(node, name, data.bones[t].keys[f]);
-		}
+		xml_node skeleton = root.append_child(NODE_SKELETON);
+		skeleton.append_attribute("name").set_value(data.clips[i].skeleton->name.c_str());
+		
+		appendBone(skeleton, data.clips[i].skeleton->rootBone);
 	}
 
-	//Float tracks
-	for (unsigned int t = 0; t < data.floats.size(); t++) {
-		//Look up track in skeleton
-		const Float& flt = data.skeleton->floats[data.floats[t].index];
+	//Animations
+	for (unsigned int i = 0; i < data.clips.size(); i++) {
+		const Clip& clip = data.clips[i];
 
-		xml_node node = anim.append_child(NODE_TRACK);
-		node.append_attribute("name").set_value(flt.name.c_str());
-		node.append_attribute("type").set_value(TYPE_FLOAT);
+		//Insert animation element
+		xml_node anim = root.append_child(NODE_ANIMATION);
+		//Set name attribute to animation index
+		char buf[8];
+		sprintf_s(buf, sizeof(buf), "%d", i);
+		anim.append_attribute("name").set_value(buf);
 
-		for (unsigned int f = 0; f < data.floats[t].keys.size(); f++) {
-			char name[8];
-			sprintf_s(name, sizeof(name), "%d", f);
-			appendf(node, name, data.floats[t].keys[f]);
+		appends(anim, ATTR_SKELETON, clip.skeleton->name.c_str());
+
+		//Bone tracks
+		for (int t = 0; t < clip.nBoneTracks; t++) {
+			BoneTrack* track = &clip.boneTracks[t];
+			assert(track->target);
+
+			xml_node node = anim.append_child(NODE_TRACK);
+			node.append_attribute("name").set_value(track->target->name.c_str());
+			node.append_attribute("type").set_value(TYPE_TRANSFORM);
+
+			for (int f = 0; f < track->keys.getSize(); f++) {
+				//Set key name to frame index
+				sprintf_s(buf, sizeof(buf), "%d", f);
+				appendTransform(node, buf, track->keys[f]);
+			}
+		}
+
+		//Float tracks
+		for (int t = 0; t < clip.nFloatTracks; t++) {
+			FloatTrack* track = &clip.floatTracks[t];
+			assert(track->target);
+
+			xml_node node = anim.append_child(NODE_TRACK);
+			node.append_attribute("name").set_value(track->target->name.c_str());
+			node.append_attribute("type").set_value(TYPE_FLOAT);
+
+			for (int f = 0; f < track->keys.getSize(); f++) {
+				sprintf_s(buf, sizeof(buf), "%d", f);
+				appendf(node, buf, track->keys[f]);
+			}
 		}
 	}
 

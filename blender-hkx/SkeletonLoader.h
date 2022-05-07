@@ -12,16 +12,11 @@ namespace iohkx
 
 		void load(hkaAnimationContainer* animCtnr);
 
-		const Skeleton& operator[](int i) const { return m_skeletons[i]; }
+		const Skeleton* operator[](int i) const { return m_skeletons[i]; }
 		bool empty() const { return m_skeletons.empty(); }
-
-	public:
-		struct
-		{
-			bool loadHierarchies;
-		} m_options;
+		const std::vector<Skeleton*>& get() const { return m_skeletons; }
 
 	private:
-		std::vector<Skeleton> m_skeletons;
+		std::vector<Skeleton*> m_skeletons;
 	};
 }
