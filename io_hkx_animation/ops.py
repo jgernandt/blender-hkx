@@ -100,10 +100,16 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #Load the xml
             doc = DocumentInterface(_tmpfilename(self.filepath))
             
-            #If nothing is selected or active object is not an Armature, create a new one
+            #Look up all selected armatures
             selected = context.view_layer.objects.selected
-            active_obj = context.view_layer.objects.active
-            if len(selected) == 0 or not active_obj or active_obj.type != 'ARMATURE':
+            armatures = []
+            for obj in selected:
+                if obj.type == 'ARMATURE':
+                    armatures.append(obj)
+            
+            if len(armatures) == 0:
+                #import armatures(s) from file
+                
                 #switch to object mode (not strictly required?)
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -113,7 +119,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                     obj.select_set(False)
                     
                 #create new armatures
-                armatures = [self.importskeleton(i, context) for i in doc.skeletons()]
+                armatures = [self.importskeleton(i, context) for i in doc.skeletons]
                 if len(armatures) == 0:
                     raise RuntimeError("File contains no skeletons")
                 
@@ -125,23 +131,33 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                 context.view_layer.objects.active = armatures[0]
                 
             else:
-                raise RuntimeError("TODO: import onto selected armatures")
+                #number of selected armatures must match number of animations in the file
+                n_anims = len(doc.animations)
+                if len(armatures) != n_anims:
+                    raise RuntimeError("Exactly %s or 0 Armatures must be selected" % (str(n_anims)))
+                
+                #One armature must be selected and active
+                if not context.view_layer.objects.active in armatures:
+                    raise RuntimeError("Primary Armature must be active")
+            
+            #this is now guaranteed to be one of our armatures
+            active_obj = context.view_layer.objects.active
+                
+            #create new actions
+            actions = [self.importanimation(i, context) for i in doc.animations]
+            
+            #If there are more actions than armatures, duplicate active armature
+            while len(actions) > len(armatures):
+                #append a duplicate of armature[0]
+                armatures.append(active_obj.copy())
+                #they can share data, right?
+                #armatures[-1].data = armatures[-1].data.copy()
+                context.scene.collection.objects.link(armatures[-1])
             
             #add animation data if missing
             for arma in armatures:
                 if not arma.animation_data:
                     arma.animation_data_create()
-                
-            #create new actions
-            actions = [self.importanimation(i, context) for i in doc.animations()]
-            
-            #If there is one armature but two actions, we should duplicate the armature
-            #(the opposite should be impossible).
-            while len(actions) > len(armatures):
-                #append a duplicate of armature[0]
-                armatures.append(armatures[0].copy())
-                armatures[-1].data = armatures[-1].data.copy()
-                context.scene.collection.objects.link(armatures[-1])
             
             #Then assign the actions
             for arma, acti in zip(armatures, actions):
@@ -160,8 +176,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         pass
     
     def importtransform(self, itrack, action):
-        #bone = armature.pose.bones[itrack.name]
-        #assert bone, "unknown track encountered"
         
         #create ActionGroup
         group = action.groups.new(itrack.name)
@@ -217,8 +231,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
     
     def importanimation(self, ianim, context):
         assert ianim.framerate == 30, "unexpected framrate"
-        #We expect the only selected object(s) to be the armature(s) that we created.
-        #armature = context.view_layer.objects.active
         
         #create a new action, named as file
         d, name = os.path.split(self.filepath)
@@ -274,13 +286,14 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #bone.matrix = parent.matrix @ mat
         #else:
             #bone.matrix = mat
-        bone.matrix = mat
+        bone.matrix = mat @ self.hktoblender
         
         #recurse
         children = [self.importbone(i, bone, armature) for i in ibone.bones()]
         
         #axis conversion (most efficient if done leaf->root)
-        bone.matrix = bone.matrix @ self.hktoblender
+        #(was, until we changed the input format)
+        #bone.matrix = bone.matrix @ self.hktoblender
         
         #set length
         child, length = self.findconnected(bone, children)

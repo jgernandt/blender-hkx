@@ -143,23 +143,26 @@ class SkeletonInterface():
 
 
 class DocumentInterface():
+    animations: AnimationInterface
+    skeletons: SkeletonInterface
+    
     def __init__(self, file):
         self._dom = xml.parse(file)
         self._root = self._dom.documentElement
         assert self._root.tagName == "blender-hkx", "invalid file"
         assert self._root.getAttribute("version") == "1", "unsupported version"
+        
+        self.animations = []
+        for node in self._root.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_ANIMATION:
+                self.animations.append(AnimationInterface(node))
+                
+        self.skeletons = []
+        for node in self._root.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_SKELETON:
+                self.skeletons.append(SkeletonInterface(node))
     
     def __del__(self):
         #probably not necessary
         self._dom.unlink()
-    
-    def animations(self):
-        for node in self._root.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_ANIMATION:
-                yield AnimationInterface(node)
-    
-    def skeletons(self):
-        for node in self._root.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_SKELETON:
-                yield SkeletonInterface(node)
 
