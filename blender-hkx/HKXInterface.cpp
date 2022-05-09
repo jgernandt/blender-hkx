@@ -54,6 +54,9 @@ hkRefPtr<hkaAnimationContainer> iohkx::HKXInterface::load(const char* fileName)
 
 void iohkx::HKXInterface::save(hkaAnimationContainer* animCtnr, const char* fileName)
 {
+	if (!animCtnr)
+		return;
+
 	hkRootLevelContainer root;
 
 	root.m_namedVariants.pushBack(hkRootLevelContainer::NamedVariant(

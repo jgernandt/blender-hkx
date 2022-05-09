@@ -33,11 +33,12 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 
 	//Set name
 	//(turns out all Skyrim skeletons have the same name, so this isn't useful)
-	//skeleton->name = src->m_name.cString();
+	skeleton->name = src->m_name.cString();
 	//Use index as name instead
-	char buf[8];
-	sprintf_s(buf, sizeof(buf), "%d", m_skeletons.size() - 1);
-	skeleton->name = buf;
+	//char buf[8];
+	//sprintf_s(buf, sizeof(buf), "%d", m_skeletons.size() - 1);
+	//skeleton->name = buf;
+	//Actually, it *is* useful when packing. We can't rely on it as an id, though.
 
 	//Create the bones
 	//To simplify dealing with paired animations, we add an extra bone
@@ -87,13 +88,11 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 	
 	//Map the bones (only needed when packing)
 	for (int i = 0; i < nBones; i++) {
-		std::string name = src->m_bones[i].m_name;
-		skeleton->boneIndex[name] = i;
+		skeleton->boneIndex[skeleton->bones[i].name] = &skeleton->bones[i];
 	}
 
 	//Map the floats (only needed when packing)
 	for (int i = 0; i < nFloats; i++) {
-		std::string name = src->m_floatSlots[i];
-		skeleton->floatIndex[name] = i;
+		skeleton->floatIndex[skeleton->floats[i].name] = &skeleton->floats[i];
 	}
 }

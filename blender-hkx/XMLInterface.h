@@ -8,7 +8,7 @@ namespace iohkx
 	public:
 		XMLInterface() {}
 
-		void read(const char* fileName, const Skeleton& skeleton, AnimationData& data);
+		void read(const char* fileName, const std::vector<Skeleton*>& skeletons, AnimationData& data);
 		void write(const AnimationData& data, const char* fileName);
 	};
 }

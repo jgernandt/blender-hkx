@@ -101,7 +101,12 @@
     <ClCompile Include="AnimationDecoder.cpp" />
     <ClCompile Include="blender-hkx.cpp" />
     <ClCompile Include="HavokEngine.cpp" />
-    <ClCompile Include="HavokProductFeatures.cpp" />
+    <ClCompile Include="HavokProductFeatures.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+      </ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+      </ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="HKXInterface.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

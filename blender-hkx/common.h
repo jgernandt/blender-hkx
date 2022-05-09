@@ -51,21 +51,17 @@ namespace iohkx
 		float refValue;
 	};
 
-	typedef std::map<std::string, int> NameMap;
-
 	struct Skeleton
 	{
 		std::string name;
 
 		int nBones;
 		Bone* bones;
-		//maps bone name to bone index
-		NameMap boneIndex;
+		std::map<std::string, Bone*> boneIndex;
 
 		int nFloats;
 		Float* floats;
-		//maps float name to float index
-		NameMap floatIndex;
+		std::map<std::string, Float*> floatIndex;
 
 		Bone* rootBone;
 	};
@@ -84,13 +80,17 @@ namespace iohkx
 
 	struct Clip
 	{
-		const Skeleton* skeleton;
+		const Skeleton* skeleton{ nullptr };
 
-		int nBoneTracks;
-		BoneTrack* boneTracks;
+		int nBoneTracks{ 0 };
+		BoneTrack* boneTracks{ nullptr };
 
-		int nFloatTracks;
-		FloatTrack* floatTracks;
+		int nFloatTracks{ 0 };
+		FloatTrack* floatTracks{ nullptr };
+
+		//maps bone index to track
+		std::vector<BoneTrack*> boneMap;
+		std::vector<FloatTrack*> floatMap;
 	};
 
 	struct AnimationData
@@ -101,34 +101,4 @@ namespace iohkx
 
 		std::vector<Clip> clips;
 	};
-
-	//Unused
-	struct Transform
-	{
-		float T[3];
-		float R[4];
-		float S[3];
-	};
-
-	inline bool operator==(const Transform& lhs, const Transform& rhs)
-	{
-		for (int i = 0; i < 3; i++) {
-			if (lhs.T[i] != rhs.T[i])
-				return false;
-		}
-		for (int i = 0; i < 4; i++) {
-			if (lhs.R[i] != rhs.R[i])
-				return false;
-		}
-		for (int i = 0; i < 3; i++) {
-			if (lhs.S[i] != rhs.S[i])
-				return false;
-		}
-		return true;
-	}
-	inline bool operator!=(const Transform& lhs, const Transform& rhs)
-	{
-		return !(lhs == rhs);
-	}
-
 }

@@ -57,7 +57,6 @@ void unpack(int argc, char* const* argv)
 
 void pack(int argc, char* const* argv)
 {
-	/*
 	//args
 	//1. input xml
 	//2. output file name
@@ -78,24 +77,23 @@ void pack(int argc, char* const* argv)
 			throw Exception(ERR_INVALID_INPUT, "No skeleton found");
 		std::cout << "---SkeletonLoader finished---\n";
 
-		AnimationData data;
+		AnimationDecoder animation;
 
 		std::cout << "---XMLInterface starting---\n";
 		XMLInterface xml;
-		xml.read(argv[0], skeleton[0], data);
+		xml.read(argv[0], skeleton.get(), animation.get());
 		std::cout << "---XMLInterface finished---\n";
 
 		std::cout << "---AnimationDecoder starting---\n";
-		AnimationDecoder decoder;
-		hkRefPtr<hkaAnimationContainer> anim = decoder.compress(data, skeleton[0]);
+		hkRefPtr<hkaAnimationContainer> anim = animation.compress();
 		std::cout << "---AnimationDecoder finished---\n";
 
 		hkx.m_options.textFormat = true;
+		//hkx.m_options.layout = LAYOUT_WIN32;
 		hkx.save(anim.val(), argv[1]);
 	}
 	else
 		throw Exception(ERR_INVALID_ARGS, "Missing arguments");
-	*/
 }
 
 int _tmain(int argc, _TCHAR** argv)
