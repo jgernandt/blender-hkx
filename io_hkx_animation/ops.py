@@ -3,18 +3,13 @@ import os
 
 import bpy
 from bpy_extras.io_utils import axis_conversion
+import bpy_extras;
 import mathutils
 
 from io_hkx_animation.ixml import DocumentInterface
 from io_hkx_animation.ixml import Track
 from io_hkx_animation.prefs import EXEC_NAME
 from io_hkx_animation.props import AXES
-
-import logging
-log = logging.getLogger(__name__)
-log.setLevel(0)
-
-import bpy_extras;
 
 SAMPLING_RATE = 30
 
@@ -25,23 +20,14 @@ class HKXIO(bpy.types.Operator):
         description="Scale factor for length units",
         default=10.0)
     
-    #axis mapping
-
-class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
-    bl_label = 'Import'
-    bl_idname = 'io_hkx_animation.import'
-    bl_description = "Import HKX animation"
-    bl_options = {'UNDO'}
-    
-    filename_ext = ".hkx"
-    
-    filter_glob: bpy.props.StringProperty(
-        default="*.hkx",
-        options={'HIDDEN'})
-    
-    skeleton_path: bpy.props.StringProperty(
-        name="Skeleton",
+    primary_skeleton: bpy.props.StringProperty(
+        name="Primary skeleton",
         description="Path to the HKX skeleton file",
+    )
+    
+    secondary_skeleton: bpy.props.StringProperty(
+        name="Secondary skeleton",
+        description="Path to the skeleton of the second actor in a paired animation",
     )
     
     bone_forward: bpy.props.EnumProperty(
@@ -60,29 +46,93 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         #update=callbackfcn
     )
     
-    hktoblender: mathutils.Matrix
-    hktoblenderinv : mathutils.Matrix
+    def initsettings(self, context):
+        #set skeleton path(s) to that of the active armature(s) (default if none)
+        
+        #primary is the active armature
+        active = context.view_layer.objects.active
+        
+        if active and active.type == 'ARMATURE':
+            self.primary_skeleton = active.data.iohkx.skeleton_path
+            self.bone_forward = active.data.iohkx.bone_forward
+            self.bone_up = active.data.iohkx.bone_up
+        
+        #default if none
+        if self.primary_skeleton == "":
+            self.primary_skeleton = context.preferences.addons[__package__].preferences.default_skeleton
+        
+        #secondary is the first non-active armature
+        selected = context.view_layer.objects.selected
+        for obj in selected:
+            if obj.type == 'ARMATURE' and obj != active:
+                self.secondary_skeleton = obj.data.iohkx.skeleton_path
+                
+                #need to decide how to store and expose the axis conventions!
+                
+                #self.bone_forward = obj.data.iohkx.bone_forward
+                #self.bone_up = obj.data.iohkx.bone_up
+                break
+        
+        #default if none 
+        if self.secondary_skeleton == "":
+            self.secondary_skeleton = context.preferences.addons[__package__].preferences.default_skeleton
+    
+    def axisconversion(self, from_forward='Y', from_up='Z', to_forward='Y', to_up='Z'):
+        #this throws if axes are invalid
+        self.framerot = axis_conversion(
+                from_forward=from_forward, 
+                from_up=from_up, 
+                to_forward=to_forward, 
+                to_up=to_up).to_4x4()
+        self.framerotinv = self.framerot.transposed()
+    
+    def getconverter(self, preferences):
+        pref = preferences.addons[__package__].preferences.converter_tool
+        exe = os.path.join(os.path.dirname(pref), EXEC_NAME)
+        if not os.path.exists(exe):
+            raise RuntimeError("Converter tool not found. Check your Addon Preferences.")
+    
+    def getselected(self, context):
+        """Return all selected objects and all selected armatures"""
+        selected = context.view_layer.objects.selected
+        active = context.view_layer.objects.active
+        
+        #sort armatures so that the active one (if any) is first
+        armatures = []
+        if active and active.type == 'ARMATURE' and active.select_get():
+            armatures.append(active)
+        
+        for obj in selected:
+            if obj.type == 'ARMATURE' and obj != active:
+                armatures.append(obj)
+        
+        return selected, armatures
+
+
+class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
+    bl_label = 'Import'
+    bl_idname = 'io_hkx_animation.import'
+    bl_description = "Import HKX animation"
+    bl_options = {'UNDO'}
+    
+    filename_ext = ".hkx"
+    
+    filter_glob: bpy.props.StringProperty(
+        default="*.hkx",
+        options={'HIDDEN'})
+    
+    framerot: mathutils.Matrix
+    framerotinv: mathutils.Matrix
     
     def invoke(self, context, event):
-        #set skeleton_path to the path of the active armature (default if none)
-        active_obj = context.view_layer.objects.active
-        if active_obj and active_obj.type == 'ARMATURE':
-            self.skeleton_path = active_obj.data.iohkx.skeleton_path
-            self.bone_forward = active_obj.data.iohkx.bone_forward
-            self.bone_up = active_obj.data.iohkx.bone_up
-        if self.skeleton_path == "":
-            self.skeleton_path = context.preferences.addons[__package__].preferences.default_skeleton
-        
-        #forward to ImportHelper
+        #get the settings and forward to ImportHelper
+        self.initsettings(context)
         return bpy_extras.io_utils.ImportHelper.invoke(self, context, event)
     
     def execute(self, context):
         try:
             #setup axis conversion
-            #this throws if axes are invalid
-            self.hktoblender = axis_conversion(
-                from_forward=self.bone_forward, from_up=self.bone_up).to_4x4()
-            self.hktoblenderinv = self.hktoblender.transposed()
+            self.axisconversion(from_forward=self.bone_forward, from_up=self.bone_up)
             
             #Set fps to 30 (and warn if it wasn't)
             if context.scene.render.fps != SAMPLING_RATE:
@@ -90,22 +140,15 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                 self.report({'WARNING'}, "Setting framerate to %s fps" % str(SAMPLING_RATE))
             
             #Look for the converter
-            pref = context.preferences.addons[__package__].preferences.converter_tool
-            exe = os.path.join(os.path.dirname(pref), EXEC_NAME)
-            if not os.path.exists(exe):
-                raise RuntimeError("Converter tool not found. Check your Addon Preferences.")
+            exe = self.getconverter(context.preferences)
             
             #Invoke the converter
             
             #Load the xml
-            doc = DocumentInterface(_tmpfilename(self.filepath))
+            doc = DocumentInterface.open(_tmpfilename(self.filepath))
             
             #Look up all selected armatures
-            selected = context.view_layer.objects.selected
-            armatures = []
-            for obj in selected:
-                if obj.type == 'ARMATURE':
-                    armatures.append(obj)
+            selected, armatures = self.getselected(context)
             
             if len(armatures) == 0:
                 #import armatures(s) from file
@@ -119,7 +162,8 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                     obj.select_set(False)
                     
                 #create new armatures
-                armatures = [self.importskeleton(i, context) for i in doc.skeletons]
+                paths = [self.primary_skeleton, self.secondary_skeleton]
+                armatures = [self.importskeleton(i, context, p) for i, p in zip(doc.skeletons, paths)]
                 if len(armatures) == 0:
                     raise RuntimeError("File contains no skeletons")
                 
@@ -166,6 +210,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             
         except Exception as e:
             self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
         finally:
             #delete tmp file
             pass
@@ -199,7 +244,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             loc, rot, scl = key.value
             loc /= self.length_scale
             mat = mathutils.Matrix.LocRotScale(loc, rot, scl).to_4x4()
-            mat = self.hktoblenderinv @ mat @ self.hktoblender
+            mat = self.framerotinv @ mat @ self.framerot
             loc, rot, scl = mat.decompose()
             
             #insert keyframes
@@ -230,7 +275,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         scl_z.update()
     
     def importanimation(self, ianim, context):
-        assert ianim.framerate == 30, "unexpected framrate"
         
         #create a new action, named as file
         d, name = os.path.split(self.filepath)
@@ -272,7 +316,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         return None, None
     
     def importbone(self, ibone, parent, armature):
-        log.debug("Importing bone " + ibone.name)
         #add bone to armature
         bone = armature.data.edit_bones.new(ibone.name)
         bone.length = 1.0
@@ -286,14 +329,14 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #bone.matrix = parent.matrix @ mat
         #else:
             #bone.matrix = mat
-        bone.matrix = mat @ self.hktoblender
+        bone.matrix = mat @ self.framerot
         
         #recurse
         children = [self.importbone(i, bone, armature) for i in ibone.bones()]
         
         #axis conversion (most efficient if done leaf->root)
         #(was, until we changed the input format)
-        #bone.matrix = bone.matrix @ self.hktoblender
+        #bone.matrix = bone.matrix @ self.framerot
         
         #set length
         child, length = self.findconnected(bone, children)
@@ -303,14 +346,14 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         return bone
     
-    def importskeleton(self, iskeleton, context):
+    def importskeleton(self, iskeleton, context, path):
         #create armature object
         data = bpy.data.armatures.new(name=iskeleton.name)
         armature = bpy.data.objects.new(iskeleton.name, data)
         context.scene.collection.objects.link(armature)
         
         #store our custom properties
-        data.iohkx.skeleton_path = self.skeleton_path
+        data.iohkx.skeleton_path = path
         data.iohkx.bone_forward = self.bone_forward
         data.iohkx.bone_up = self.bone_up
         
@@ -355,8 +398,9 @@ def _mapname(name):
 
 class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     bl_label = 'Export'
-    bl_idname = 'io_hkx.export'
+    bl_idname = 'io_hkx_animation.export'
     bl_description = "Export animation as HKX"
+    bl_options = {'UNDO'}
     
     filename_ext = ".hkx"
     
@@ -364,62 +408,149 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         default="*.hkx",
         options={'HIDDEN'})
     
-    hkx_blend_hint_additive: bpy.props.BoolProperty(
+    blend_mode: bpy.props.BoolProperty(
         name="Additive",
         description="Store offsets instead of pose",
         default=False)
+    
+    framerot: mathutils.Matrix
+    framerotinv: mathutils.Matrix
+    
+    def invoke(self, context, event):
+        #get the settings and forward to ImportHelper
+        self.initsettings(context)
+        return bpy_extras.io_utils.ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
         try:
-            #Check that we can find the exe
+            #setup axis conversion
+            self.axisconversion(to_forward=self.bone_forward, to_up=self.bone_up)
             
+            #Look for the converter
+            exe = self.getconverter(context.preferences)
             
-            #get the active object
-            #   if none, throw
-            selected = bpy.context.view_layer.objects.selected
-            active_obj = bpy.context.view_layer.objects.active
-            if len(selected) == 0 or not active_obj or active_obj.type != 'ARMATURE':
-                raise RuntimeError("No active Armature")
+            #Look up all selected armatures
+            selected, armatures = self.getselected(context)
+            active = context.view_layer.objects.active
+            #fail if none
+            if len(armatures) == 0 or not active in armatures:
+                raise RuntimeError("Needs an active Armature")
+            #fail if more than two
+            if len(armatures) > 2:
+                raise RuntimeError("Select at most two Armatures")
+            
+            #Look for the skeleton(s)
+            if not os.path.exists(self.primary_skeleton):
+                raise RuntimeError("Primary skeleton file not found")
+            if len(armatures) > 1 and not os.path.exists(self.secondary_skeleton):
+                raise RuntimeError("Secondary skeleton file not found")
+            
+            #Save our custom properties
+            for arma, path in zip(armatures, [self.primary_skeleton, self.secondary_skeleton]):
+                arma.data.iohkx.skeleton_path = path
+                arma.data.iohkx.bone_forward = self.bone_forward
+                arma.data.iohkx.bone_up = self.bone_up
+            
+            #create a document
+            doc = DocumentInterface.create()
+            
+            #determine our sampling parameters
+            self.framestep = context.scene.render.fps / SAMPLING_RATE
+            self.frame0 = context.scene.frame_start
+            framesteps = context.scene.frame_end - self.frame0
+        
+            #if framerate is not 30 fps, we sample at nearest possible rate and warn
+            if context.scene.render.fps != SAMPLING_RATE:
+                framesteps = int(round(framesteps / self.framestep))
+                self.report({'WARNING'}, "Sampling animation at %s fps" % str(SAMPLING_RATE))
+            
+            self.frames = framesteps + 1
+            
+            #add frame, framerate, blend mode
+            doc.set_frames(self.frames)
+            doc.set_framerate(SAMPLING_RATE)
+            doc.set_additive(self.blend_mode)
+            
+            #add animations
+            for armature in armatures:
+                self.exportanimation(doc, armature, context)
                 
-            #get the active Action of the active object
-            #   if none, throw
-            #action = None
-            #if active_obj.animation_data:
-            #    action = active_obj.animation_data.action
+            #restore active state
+            context.view_layer.objects.active = active
             
-            #if not action:
-            #    raise RuntimeError("Active object has no active Action")
+            if len(doc.animations) != 0:
+                #write xml
+                doc.save(_tmpfilename(self.filepath))
+                
+                #invoke exe
+                raise RuntimeError("TODO")
             
-            #make sure that the skeleton file exists
-            skeleton_file = bpy.path.abspath(active_obj.data.iohkx.skeleton_path)
-            if not os.path.exists(skeleton_file):
-                raise RuntimeError("Skeleton file %s not found" % skeleton_file)
-            
-            #write tmp file
-            tmp_file = _tmpfilename(self.filepath)
-            with open(tmp_file, mode='w') as f:
-                if self.hkx_blend_hint_additive:
-                    gen = None
-                else:
-                    gen = ActionGenerator(f)
-                gen.armature = active_obj
-                gen.scene = context.scene
-                gen.lengthScale = self.hkx_scale_factor
-                gen.generate(self)
-            
-            #invoke exe
-            
-            self.report({'INFO'}, "Exported %s successfully" % self.filepath)
-            
-        except OSError as e:
+        except Exception as e:
             self.report({'ERROR'}, str(e))
-        except RuntimeError as e:
-            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
         finally:
             #delete tmp file
             pass
         
+        self.report({'INFO'}, "Exported %s successfully" % self.filepath)
         return {'FINISHED'}
+    
+    def exportanimation(self, document, armature, context):
+        
+        #activate this armature
+        context.view_layer.objects.active = armature
+        
+        #abort if no bones are selected
+        bones = context.selected_pose_bones_from_active_object
+        if not bones or len(bones) == 0:
+            self.report({'WARNING'}, "No bones selected in %s, ignoring" % armature.name)
+            return
+        
+        #name of animation = index
+        ianim = document.add_animation(str(len(document.animations)))
+        #name of skeleton = object name
+        ianim.set_skeleton_name(armature.data.iohkx.skeleton_path)
+        
+        #tracks = [ianim.add_track(bone.name, "transform") for bone in bones]
+        tracks = [ianim.add_transform_track(bone.name) for bone in bones]
+        
+        #loop over frames, add key for each track
+        current_frame = context.scene.frame_current
+        for i in range(self.frames):
+            #set current frame (and subframe, if appropriate)
+            if context.scene.render.fps == SAMPLING_RATE:
+                context.scene.frame_set(self.frame0 + i)
+            else:
+                subframe, frame = math.modf(self.frame0 + i * self.framestep)
+                context.scene.frame_set(int(frame), subframe=subframe)
+            
+            for bone, track in zip(bones, tracks):
+                #pull current transform
+                loc, rot, scl = bone.matrix.decompose()
+                
+                #coordinate transforms
+                mat = mathutils.Matrix.LocRotScale(loc, rot, scl).to_4x4() @ self.framerot
+                
+                #do this in the converter instead, less double transforming
+                #if bone.parent:
+                #    try:
+                #        imat = (bone.parent.matrix @ self.framerot).inverted()
+                #    except:
+                #        raise RuntimeError("Scale must not be zero")
+                #    loc, rot, scl = (imat @ mat).decompose()
+                #else:
+                #    loc, rot, scl = mat.decompose()
+                
+                loc, rot, scl = mat.decompose()
+                
+                loc *= self.length_scale
+                
+                #add key
+                key = track.add_key(i)
+                key.set_value(loc, rot, scl)
+        
+        #restore state
+        context.scene.frame_set(current_frame)
     
 
 def exportop(self, context):
