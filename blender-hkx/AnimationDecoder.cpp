@@ -499,7 +499,7 @@ void iohkx::AnimationDecoder::mapSingle(
 	}
 }
 
-void processBone(Bone* bone, Clip& clip, int frame, const hkQsTransform& T, const hkQsTransform& iT)
+void objToParent(Bone* bone, Clip& clip, int frame, const hkQsTransform& T, const hkQsTransform& iT)
 {
 	assert(bone && frame >= 0);
 
@@ -527,18 +527,35 @@ void processBone(Bone* bone, Clip& clip, int frame, const hkQsTransform& T, cons
 
 	//then recurse
 	for (auto&& child : bone->children) {
-		processBone(child, clip, frame, next_T, next_iT);
+		objToParent(child, clip, frame, next_T, next_iT);
+	}
+}
+
+void sanitiseQuats(Clip& clip)
+{
+	for (int i = 0; i < clip.nBoneTracks; i++) {
+		for (int j = 1; j < clip.boneTracks[i].keys.getSize(); j++) {
+			auto&& thisR = clip.boneTracks[i].keys[j].m_rotation.m_vec;
+			auto&& prevR = clip.boneTracks[i].keys[j - 1].m_rotation.m_vec;
+			if (thisR.dot4(prevR) < 0.0f) {
+				thisR.setNeg4(thisR);
+			}
+		}
 	}
 }
 
 void iohkx::AnimationDecoder::preProcess()
 {
-	//Transform all bone transforms to parent space
-	//(we expect them to be in object space now)
 	hkQsTransform I(hkQsTransform::IDENTITY);
 	for (auto&& clip : m_data.clips) {
+
+		//Transform all bone transforms to parent space
+		//(we expect them to be in object space now)
 		for (int f = 0; f < m_data.frames; f++) {
-			processBone(clip.skeleton->rootBone, clip, f, I, I);
+			objToParent(clip.skeleton->rootBone, clip, f, I, I);
 		}
+
+		//set all rotations to the shortest distance from previous key
+		sanitiseQuats(clip);
 	}
 }

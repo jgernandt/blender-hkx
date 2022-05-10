@@ -88,7 +88,7 @@ void pack(int argc, char* const* argv)
 		hkRefPtr<hkaAnimationContainer> anim = animation.compress();
 		std::cout << "---AnimationDecoder finished---\n";
 
-		hkx.m_options.textFormat = true;
+		//hkx.m_options.textFormat = true;
 		//hkx.m_options.layout = LAYOUT_WIN32;
 		hkx.save(anim.val(), argv[1]);
 	}
