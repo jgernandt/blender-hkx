@@ -14,18 +14,11 @@ TAG_TRANSFORM = "transform"
 
 ATTR_FRAMES = "frames"
 ATTR_FRAMERATE = "frameRate"
-ATTR_BLENDMODE = "blendMode"
+ATTR_ADDITIVE = "additive"
 ATTR_SKELETON = "skeleton"
-
-VAL_ADDITIVE = "ADDITIVE"
-VAL_NORMAL = "NORMAL"
 
 CURRENT_VERSION = "1"
 SUPPORTED_VERSIONS = {"1"}
-
-class BlendMode(Enum):
-    NORMAL = VAL_NORMAL
-    ADDITIVE = VAL_ADDITIVE
 
 class Track(Enum):
     FLOAT = TAG_FLOAT
@@ -255,7 +248,7 @@ class DocumentInterface(DOMInterface):
         return ianim
     
     def set_additive(self, value):
-        self._set_param(TAG_STRING, ATTR_BLENDMODE, value)
+        self._set_param(TAG_STRING, ATTR_ADDITIVE, value)
     
     def set_frames(self, value):
         self._set_param(TAG_INT, ATTR_FRAMES, value)

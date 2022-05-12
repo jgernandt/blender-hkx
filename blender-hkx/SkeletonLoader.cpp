@@ -86,12 +86,12 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 		skeleton->floats[i].refValue = src->m_referenceFloats[i];
 	}
 	
-	//Map the bones (only needed when packing)
+	//Map the bones
 	for (int i = 0; i < nBones; i++) {
 		skeleton->boneIndex[skeleton->bones[i].name] = &skeleton->bones[i];
 	}
 
-	//Map the floats (only needed when packing)
+	//Map the floats
 	for (int i = 0; i < nFloats; i++) {
 		skeleton->floatIndex[skeleton->floats[i].name] = &skeleton->floats[i];
 	}

@@ -5,29 +5,167 @@ constexpr int FRAME_RATE = 30;
 
 using namespace iohkx;
 
-static inline hkVector4 rawToVec(const float* raw)
+//Transform the bone and its descendants to parent-space transform T
+static void objToParent(Bone* bone, Clip& clip, int frame, 
+	const hkQsTransform& T, const hkQsTransform& iT)
 {
-	return hkVector4(raw[0], raw[1], raw[2]);
+	assert(bone && frame >= 0);
+
+	//T is our parent's current pose (in object space) and iT its inverse
+
+	//Calc our recursion transforms
+	BoneTrack* track = bone->index >= 0 ? clip.boneMap[bone->index] : clip.rootTransform;
+	//if we have no track, our transform is T * our parent-space ref
+	//if we do have a track, we use our current key
+	hkQsTransform next_T;
+	if (track && !track->keys.isEmpty()) {
+		//as long as we export in object space, we need keys on every frame
+		assert(track->keys.getSize() > frame);
+		//save current
+		next_T = track->keys[frame];
+		//and update
+		track->keys[frame].setMul(iT, track->keys[frame]);
+	}
+	else {
+		next_T.setMul(T, bone->refPose);
+	}
+
+	hkQsTransform next_iT;
+	next_iT.setInverse(next_T);
+
+	//then recurse
+	for (auto&& child : bone->children) {
+		objToParent(child, clip, frame, next_T, next_iT);
+	}
 }
 
-static inline hkQuaternion rawToQuat(const float* raw)
+//Set the sign of all quaternions so that they rotate the shortest path
+static void sanitiseQuats(Clip& clip)
 {
-	return hkQuaternion(raw[1], raw[2], raw[3], raw[0]);
+	for (int i = 0; i < clip.nBoneTracks; i++) {
+		for (int j = 1; j < clip.boneTracks[i].keys.getSize(); j++) {
+			auto&& thisR = clip.boneTracks[i].keys[j].m_rotation.m_vec;
+			auto&& prevR = clip.boneTracks[i].keys[j - 1].m_rotation.m_vec;
+			if (thisR.dot4(prevR) < 0.0f) {
+				thisR.setNeg4(thisR);
+			}
+		}
+	}
 }
 
-static inline void vecToRaw(const hkVector4& vec, float* raw)
+//Is this skeleton a HORSE?
+static bool isHorse(const Skeleton* skeleton)
 {
-	raw[0] = vec(0);
-	raw[1] = vec(1);
-	raw[2] = vec(2);
+	//How can we tell if this is a HORSE?
+	//Horse bones are named beginning with Horse, except for "NPC Root [Root]"
+	//and "SaddleBone". If we look at 3 bones we'll know.
+	for (int i = 0; i < 3 && i < skeleton->nBones; i++) {
+		if (std::strncmp(skeleton->bones[i].name.c_str(), "Horse", 5) == 0) {
+			return true;
+		}
+	}
+	return false;
 }
 
-static inline void quatToRaw(const hkQuaternion& q, float* raw)
+//Set the appropriate annotation name, depending on the type of actor
+static void setSecondaryName(
+	const std::string& name,
+	const Skeleton* skeleton,
+	hkaAnnotationTrack& annotation)
 {
-	raw[0] = q(3);
-	raw[1] = q(0);
-	raw[2] = q(1);
-	raw[3] = q(2);
+	if (name == "NPC Root [Root]" && isHorse(skeleton)) {
+		annotation.m_trackName = "2_";
+	}
+	else {
+		annotation.m_trackName.printf("2_%s", name.c_str());
+	}
+}
+
+//Set the appropriate annotation name, depending on the type of actor
+static void setSecondaryRootName(
+	const std::string& name,
+	const Skeleton* skeleton,
+	hkaAnnotationTrack& annotation)
+{
+	if (isHorse(skeleton)) {
+		annotation.m_trackName = "2_Horse";
+	}
+	else {
+		annotation.m_trackName = "2_";
+	}
+}
+
+//Find the (clip index, bone) from an annotation name
+static std::pair<int, Bone*> findBone(const char* name, const std::vector<Clip>& clips)
+{
+	//This is made a lot harder than it should be, because of horses. Thanks, horses.
+
+	if (std::strcmp(name, "PairedRoot") == 0) {
+		//This is not an actual track (?)
+		return { -1, nullptr };
+	}
+
+	//Drop the "2_" prefix, if any, and pick out special cases
+	int clip;//clip index
+
+	if (std::strncmp(name, "2_", 2) == 0) {
+		//Look in secondary skeleton, without the prefix
+		name += 2;
+		clip = 1;
+
+		//If "2_" is the full name, this is a special case
+		if (*name == '\0') {
+			//this name seems to have multiple possible meanings
+			//if this is a HORSE, this is "NPC Root [Root]"
+			//else it is the root bone
+
+			if (isHorse(clips[clip].skeleton)) {
+				//find "NPC Root [Root]". Should be the first bone.
+				for (int i = 0; i < clips[clip].skeleton->nBones; i++) {
+					if (clips[clip].skeleton->bones[i].name == "NPC Root [Root]") {
+						return { clip, &clips[clip].skeleton->bones[i] };
+					}
+				}
+				//unexpected
+				return { -1, nullptr };
+			}
+			else {
+				return { clip, clips[clip].skeleton->rootBone };
+			}
+		}
+		//Also, the name "2_Horse" is unusual
+		else if (std::strcmp(name, "Horse") == 0) {
+			//Horses are stupid?
+			//This is the root bone
+			return { clip, clips[clip].skeleton->rootBone };
+		}
+	}
+	else if (std::strcmp(name, "SaddleBone") == 0) {
+		//Another special case? This belongs to secondary actor (a HORSE)
+		clip = 1;
+	}
+	else {
+		//Look in primary skeleton
+		clip = 0;
+
+		if (std::strcmp(name, "NPC") == 0) {
+			//Root bone
+			return { clip, clips[clip].skeleton->rootBone };
+		}
+	}
+	//Regular case, search skeleton
+	auto it = clips[clip].skeleton->boneIndex.find(name);
+	if (it != clips[clip].skeleton->boneIndex.end()) {
+		return { clip, it->second };
+	}
+	else {
+		//This bone is not in the skeleton.
+		//I would have considered this evidence of a mismatched skeleton,
+		//but it seems horses are weird.
+		return { clip, nullptr };
+	}
+
+	return { -1, nullptr };
 }
 
 iohkx::AnimationDecoder::AnimationDecoder()
@@ -36,6 +174,7 @@ iohkx::AnimationDecoder::AnimationDecoder()
 iohkx::AnimationDecoder::~AnimationDecoder()
 {
 	for (unsigned int i = 0; i < m_data.clips.size(); i++) {
+		delete m_data.clips[i].rootTransform;
 		delete[] m_data.clips[i].boneTracks;
 		delete[] m_data.clips[i].floatTracks;
 	}
@@ -67,19 +206,24 @@ iohkx::AnimationDecoder::compress()
 
 	preProcess();
 
-	//Create binding (will be filled out be map*Comp)
+	//Create binding (will be filled out by map*Comp)
 	hkaAnimationBinding* binding = new hkaAnimationBinding;
+
+	//Initialise raw animation object
+	hkRefPtr<hkaInterleavedUncompressedAnimation> raw =
+		new hkaInterleavedUncompressedAnimation;
+	raw->removeReference();
 
 	//bones[i], floats[i] will be the data for output track i
 	// (the pair is so that we can find the bone (to fill with ref pose)
 	//  if there is no track for it)
 	std::vector<std::pair<BoneTrack*, Bone*>> bones;
 	std::vector<FloatTrack*> floats;
-	if (m_data.clips.size() > 1) {
-		mapPairedComp(binding, bones, floats);
+	if (m_data.clips.size() == 2) {
+		mapPairedComp(binding, raw, bones, floats);
 	}
-	else {
-		mapSingleComp(binding, bones, floats);
+	else if (m_data.clips.size() == 1) {
+		mapSingleComp(binding, raw, bones, floats);
 	}
 
 	int nBones = bones.size();
@@ -89,20 +233,11 @@ iohkx::AnimationDecoder::compress()
 		//Nothing to export
 		return hkRefPtr<hkaAnimationContainer>();
 
-	//Initialise raw animation object
-	hkRefPtr<hkaInterleavedUncompressedAnimation> raw =
-		new hkaInterleavedUncompressedAnimation;
-	raw->removeReference();
-
 	raw->m_duration = static_cast<float>(m_data.frames - 1) / m_data.frameRate;
 	raw->m_numberOfTransformTracks = nBones;
 	raw->m_numberOfFloatTracks = nFloats;
 	raw->m_transforms.setSize(nBones * m_data.frames);
 	raw->m_floats.setSize(nFloats * m_data.frames);
-	raw->m_annotationTracks.setSize(nBones);
-	for (int i = 0; i < nBones; i++)
-		//the strings are not initialised
-		raw->m_annotationTracks[i].m_trackName = "";
 
 	//Transfer data to raw anim
 	for (int i = 0; i < nBones; i++) {
@@ -119,12 +254,16 @@ iohkx::AnimationDecoder::compress()
 				raw->m_transforms[i + f * nBones] = keys.getSize() > f ? keys[f] : keys.back();
 			}
 		}
-		else if (m_data.blendMode != "ADDITIVE") {
-			//fill with ref pose
+		else if (!m_data.additive) {
+			//fill with ref pose (or identity if we have no bone)
 
 			for (int f = 0; f < m_data.frames; f++) {
-				assert(bones[i].second);
-				raw->m_transforms[i + f * nBones] = bones[i].second->refPose;
+				if (bones[i].second) {
+					raw->m_transforms[i + f * nBones] = bones[i].second->refPose;
+				}
+				else {
+					raw->m_transforms[i + f * nBones].setIdentity();
+				}
 			}
 		}
 		//else ignore
@@ -149,7 +288,9 @@ iohkx::AnimationDecoder::compress()
 	hkaSkeletonUtils::normalizeRotations(raw->m_transforms.begin(), raw->m_transforms.getSize());
 
 	hkaSplineCompressedAnimation::AnimationCompressionParams acp;
-	//acp.m_enableSampleSingleTracks = true;//enable for paired anims!
+	if (m_data.clips.size() == 2)
+		//paired animations need this (crash otherwise)
+		acp.m_enableSampleSingleTracks = true;
 
 	hkaSplineCompressedAnimation::TrackCompressionParams tcp;
 	tcp.m_translationTolerance = 0.001f;
@@ -180,7 +321,7 @@ void iohkx::AnimationDecoder::decompress(
 	//Init to a meaningful state, whether we are being reused or not
 	m_data.frames = 0;
 	m_data.frameRate = 30;
-	m_data.blendMode.clear();
+	m_data.additive = false;
 	m_data.clips.clear();
 
 	//Abort if there is no data
@@ -209,8 +350,7 @@ void iohkx::AnimationDecoder::decompress(
 	//Set frame count, framerate, blend mode
 	m_data.frames = static_cast<int>(std::round(anim->m_duration * FRAME_RATE)) + 1;
 	m_data.frameRate = FRAME_RATE;
-	bool additive = binding->m_blendHint == hkaAnimationBinding::ADDITIVE;
-	m_data.blendMode = additive ? "ADDITIVE" : "NORMAL";
+	m_data.additive = binding->m_blendHint == hkaAnimationBinding::ADDITIVE;
 
 	//Init the key arrays
 	for (int i = 0; i < anim->m_numberOfTransformTracks; i++) {
@@ -285,18 +425,100 @@ void iohkx::AnimationDecoder::decompress(
 }
 
 void iohkx::AnimationDecoder::mapPairedComp(
-	hkaAnimationBinding* binding, 
+	hkaAnimationBinding* binding,
+	hkaAnimation* animation,
 	std::vector<std::pair<BoneTrack*, Bone*>>& bones,
 	std::vector<FloatTrack*>& floats)
 {
+	assert(binding && m_data.clips.size() == 2);
+
+	bones.clear();
+	floats.clear();
+
+	if (m_data.additive)
+		//I've never seen this in paired, don't know how to deal with it
+		return;
+
+	binding->m_originalSkeletonName = "PairedRoot";
+
+	Clip& primary = m_data.clips.front();
+	Clip& secondary = m_data.clips.back();
+
+	//Include all bones in both skeletons, their root bones and the paired root
+	int nBones = primary.skeleton->nBones + secondary.skeleton->nBones + 3;
+	//and any addenda
+	//nBones += primary.addenda.size() + secondary.addenda.size();
+
+	//Some paired anims have float tracks, but I don't know how to interpret that.
+	//Leave them for now.
+	int nFloats = 0;
+
+	//Fill out the targets and annotation names
+	bones.resize(nBones);
+	animation->m_annotationTracks.setSize(nBones);
+	auto&& annotations = animation->m_annotationTracks;
+
+	//PairedRoot (has neither track nor bone)
+	bones[0].first = nullptr;
+	bones[0].second = nullptr;
+	annotations[0].m_trackName = "PairedRoot";
+
+	//I don't know if the order here matters. Let's assume not.
+
+	//Primary actor
+	// root
+	bones[1].first = primary.rootTransform;
+	bones[1].second = primary.skeleton->rootBone;
+	annotations[1].m_trackName = ROOT_BONE;
+	int current = 2;
+	// bones
+	for (int i = 0; i < primary.skeleton->nBones; i++) {
+		bones[current].first = primary.boneMap[i];
+		bones[current].second = &primary.skeleton->bones[i];
+		annotations[current].m_trackName = bones[current].second->name.c_str();
+		++current;
+	}
+	// addenda
+	//for (unsigned int i = 0; i < primary.addenda.size(); i++) {
+	//	bones[current].first = primary.addenda[i].track.get();
+	//	bones[current].second = primary.addenda[i].bone.get();
+	//	annotations[current].m_trackName = bones[current].second->name.c_str();
+	//	++current;
+	//}
+
+	//Secondary actor
+	// root
+	bones[current].first = secondary.rootTransform;
+	bones[current].second = secondary.skeleton->rootBone;
+	setSecondaryRootName(secondary.skeleton->rootBone->name,
+		secondary.skeleton, annotations[current]);
+	++current;
+	// bones
+	for (int i = 0; i < secondary.skeleton->nBones; i++) {
+		bones[current].first = secondary.boneMap[i];
+		bones[current].second = &secondary.skeleton->bones[i];
+		setSecondaryName(secondary.skeleton->bones[i].name, 
+			secondary.skeleton, annotations[current]);
+		++current;
+	}
+	// addenda
+	//for (unsigned int i = 0; i < secondary.addenda.size(); i++) {
+	//	bones[current].first = secondary.addenda[i].track.get();
+	//	bones[current].second = secondary.addenda[i].bone.get();
+	//	annotations[current].m_trackName = bones[current].second->name.c_str();
+	//	++current;
+	//}
+
+	assert(current == nBones);
 }
 
 void iohkx::AnimationDecoder::mapSingleComp(
-	hkaAnimationBinding* binding, 
+	hkaAnimationBinding* binding,
+	hkaAnimation* animation,
 	std::vector<std::pair<BoneTrack*, Bone*>>& bones,
 	std::vector<FloatTrack*>& floats)
 {
-	assert(binding);
+	assert(binding && !m_data.clips.empty());
 
 	Clip& clip = m_data.clips.front();
 
@@ -304,8 +526,7 @@ void iohkx::AnimationDecoder::mapSingleComp(
 
 	//In additive mode, we'll include whatever tracks the user exported.
 	//In normal mode, we'll fill all missing tracks with the bind pose.
-	bool additive = m_data.blendMode == "ADDITIVE";
-	int nBones = additive ? clip.nBoneTracks : clip.skeleton->nBones;
+	int nBones = m_data.additive ? clip.nBoneTracks : clip.skeleton->nBones;
 
 	//We'll include whatever float tracks the user exported.
 	int nFloats = clip.nFloatTracks;
@@ -316,18 +537,30 @@ void iohkx::AnimationDecoder::mapSingleComp(
 	//If bones are missing, we need the mapping from clip.boneTracks to bone index.
 	if (nBones < clip.skeleton->nBones) {
 		assert(nBones == clip.nBoneTracks);
-		binding->m_transformTrackToBoneIndices.setSize(nBones);
-		for (int i = 0; i < nBones; i++) {
-			binding->m_transformTrackToBoneIndices[i] = clip.boneTracks[i].target->index;
+		binding->m_transformTrackToBoneIndices.reserve(nBones);
+
+		//sort by bone index
+		for (int i = 0; i < clip.skeleton->nBones; i++) {
+			if (clip.boneMap[i]) {
+				assert(clip.boneMap[i]->target->index == i);//or we messed up the map
+				binding->m_transformTrackToBoneIndices.pushBack(i);
+			}
 		}
+		assert(binding->m_transformTrackToBoneIndices.getSize() == nBones);
 	}
 	//Same with floats
 	if (nFloats < clip.skeleton->nFloats) {
 		assert(nFloats == clip.nFloatTracks);
-		binding->m_floatTrackToFloatSlotIndices.setSize(nFloats);
-		for (int i = 0; i < nFloats; i++) {
-			binding->m_floatTrackToFloatSlotIndices[i] = clip.floatTracks[i].target->index;
+		binding->m_floatTrackToFloatSlotIndices.reserve(nFloats);
+
+		//sort by bone index
+		for (int i = 0; i < clip.skeleton->nFloats; i++) {
+			if (clip.floatMap[i]) {
+				assert(clip.floatMap[i]->target->index == i);//or we messed up the map
+				binding->m_floatTrackToFloatSlotIndices.pushBack(i);
+			}
 		}
+		assert(binding->m_floatTrackToFloatSlotIndices.getSize() == nFloats);
 	}
 
 	bones.resize(nBones, { nullptr, nullptr });
@@ -335,6 +568,9 @@ void iohkx::AnimationDecoder::mapSingleComp(
 
 	//Fill out bones and floats in whatever order we want it in the final animation,
 	//i.e. in skeleton order
+	
+	//only correct if nBones == skeleton->nBones! Fix later.
+	assert(nBones == clip.skeleton->nBones);
 	for (int i = 0; i < nBones; i++) {
 		bones[i].first = clip.boneMap[i];//may be null
 		bones[i].second = &clip.skeleton->bones[i];
@@ -342,6 +578,12 @@ void iohkx::AnimationDecoder::mapSingleComp(
 	for (int i = 0; i < nFloats; i++) {
 		floats[i] = clip.floatMap[i];//may be null
 	}
+
+	//Initialise annotation tracks
+	animation->m_annotationTracks.setSize(nBones);
+	for (int i = 0; i < nBones; i++)
+		//the strings are not initialised
+		animation->m_annotationTracks[i].m_trackName = "";
 }
 
 void iohkx::AnimationDecoder::mapPaired(
@@ -352,81 +594,111 @@ void iohkx::AnimationDecoder::mapPaired(
 {
 	assert(binding);
 
+	hkaAnimation* animation = binding->m_animation;
+
+	//We expect all paired animations to have transform tracks
+	if (!animation || animation->m_numberOfTransformTracks == 0)
+		return;
+
+	//We need annotations to map the tracks. Nothing to do if they are missing.
+	if (animation->m_numberOfTransformTracks != animation->m_annotationTracks.getSize())
+		return;
+
 	//There must be at least one skeleton, but we can't say anything about
 	//bone counts at this time.
-	//Well, we can say that the number of tracks must not exceed the number
-	//of bones in both skeletons + 3 (two extra roots and the paired root)
 	if (skeletons.empty() || skeletons[0] == nullptr)
 		return;
 
-	//If there is only one skeleton, it's for both clips
-	if (skeletons.size() == 1) {
-		//The number of tracks should not exceed 2 * nBones + 3.
-		//It should equal that, but that may not always be true.
-		//Let's assume it will, for now.
-		if (bones.size() != 2 * skeletons[0]->nBones + 3)
-			return;
+	m_data.clips.resize(2);
 
-		m_data.clips.resize(2);
+	//If there is only one skeleton, we use it for both clips
+	if (skeletons.size() == 1) {
 		m_data.clips[0].skeleton = skeletons[0];
 		m_data.clips[1].skeleton = skeletons[0];
 	}
-	//If there are two skeletons, do we assume that they are in order?
-	//Or do we verify that by looking through the annotations?
-	//Let's not bother verifying, for now.
 	else {
-		if (bones.size() != skeletons[0]->nBones + skeletons[1]->nBones + 3)
-			return;
-
-		m_data.clips.resize(2);
 		m_data.clips[0].skeleton = skeletons[0];
 		m_data.clips[1].skeleton = skeletons[1];
 	}
 
-	//Allocate the tracks
-	for (unsigned int i = 0; i < m_data.clips.size(); i++) {
-		//Assume that all bones are included in the animation
-		assert(bones.size() == m_data.clips[0].skeleton->nBones
-			+ m_data.clips[1].skeleton->nBones + 3);
+	//Identify target bone by annotations
+	//We'll do bone name lookup to map track index to a bone
+	std::vector<std::pair<int, Bone*>> maps[2];//(track, bone)
+	maps[0].reserve(animation->m_numberOfTransformTracks);
+	maps[1].reserve(animation->m_numberOfTransformTracks);
 
-		//number of tracks is number of bones + 1 (the root)
-		m_data.clips[i].nBoneTracks = m_data.clips[i].skeleton->nBones + 1;
-		m_data.clips[i].boneTracks = new BoneTrack[m_data.clips[i].nBoneTracks];
+	std::pair<int, Bone*> roots[2]{ { -1, nullptr }, { -1, nullptr } };
+
+	std::vector<std::pair<int, Bone*>> addenda[2];
+
+	for (int i = 0; i < animation->m_numberOfTransformTracks; i++) {
+		//get (clip index, bone) by name
+		auto&& name = animation->m_annotationTracks[i].m_trackName;
+		auto pair = findBone(name.cString(), m_data.clips);
+
+		if (pair.first == 0 || pair.first == 1) {
+			Clip& clip = m_data.clips[pair.first];
+			if (pair.second) {
+				//We found a bone
+				if (pair.second == clip.skeleton->rootBone) {
+
+					//store the root immediately
+					assert(!clip.rootTransform);
+					clip.rootTransform = new BoneTrack;
+					clip.rootTransform->target = clip.skeleton->rootBone;
+					bones[i] = clip.rootTransform;
+				}
+				else
+					maps[pair.first].push_back({ i, pair.second });
+			}
+			else {
+				//This has been assigned to one of the clips, but it has no bone.
+				//Horse anims will get here. What to do? Do we create this bone?
+				//Ignore it?
+
+				//Create an addendum to the skeleton
+				//auto&& addenda = m_data.clips[pair.first].addenda;
+				//addenda.push_back(Addendum());
+				//addenda.back().bone = std::make_unique<Bone>();
+				//get rid of the prefix
+				//const char* p = name.cString();
+				//if (std::strncmp(name, "2_", 2) == 0) {
+				//	p += 2;
+				//}
+				//addenda.back().bone->name = p;
+				//addenda.back().bone->refPose.setIdentity();
+				//addenda.back().bone->refPoseObj.setIdentity();
+
+				//addenda.back().track = std::make_unique<BoneTrack>();
+				//addenda.back().track->target = addenda.back().bone.get();
+
+				//bones[i] = addenda.back().track.get();
+			}
+		}
+	}
+
+	for (unsigned int i = 0; i < m_data.clips.size(); i++) {
+		//Allocate the tracks
+		int nTracks = maps[i].size();
+		m_data.clips[i].nBoneTracks = nTracks;
+		m_data.clips[i].boneTracks = new BoneTrack[nTracks];
+		m_data.clips[i].boneMap.resize(m_data.clips[i].skeleton->nBones, nullptr);
 
 		//Some paired anims have float tracks, but I don't know how to interpret that.
 		//Leave them for now.
 		m_data.clips[i].nFloatTracks = 0;
 		m_data.clips[i].floatTracks = nullptr;
-	}
+		m_data.clips[i].floatMap.resize(m_data.clips[i].skeleton->nFloats, nullptr);
 
-	//Set the track targets
-	//track 0 is unused
-	//clip 1 comes first
-	//track 1 is the root bone of skeleton 1
-	m_data.clips[1].boneTracks[0].target = m_data.clips[1].skeleton->rootBone;
-	//then follows the bones of skeleton 1 in order
-	for (int i = 1; i < m_data.clips[1].nBoneTracks; i++) {
-		m_data.clips[1].boneTracks[i].target = &m_data.clips[1].skeleton->bones[i - 1];
-	}
-	//clip 0 starts here
-	//first the root bone of skeleton 0
-	m_data.clips[0].boneTracks[0].target = m_data.clips[0].skeleton->rootBone;
-	//then the bones of skeleton 0 in order
-	for (int i = 1; i < m_data.clips[0].nBoneTracks; i++) {
-		m_data.clips[0].boneTracks[i].target = &m_data.clips[0].skeleton->bones[i - 1];
-	}
+		for (int j = 0; j < nTracks; j++) {
+			//Set the track targets
+			BoneTrack* track = &m_data.clips[i].boneTracks[j];
+			track->target = maps[i][j].second;
+			m_data.clips[i].boneMap[track->target->index] = track;
 
-	//Finally the mapping
-	//track 0 is unused
-	bones[0] = nullptr;
-	int outer = 1;
-	//first all the tracks in clip 1
-	for (int i = 0; i < m_data.clips[1].nBoneTracks; i++, outer++) {
-		bones[outer] = &m_data.clips[1].boneTracks[i];
-	}
-	//then all the tracks in clip 0
-	for (int i = 0; i < m_data.clips[0].nBoneTracks; i++, outer++) {
-		bones[outer] = &m_data.clips[0].boneTracks[i];
+			//Final mapping
+			bones[maps[i][j].first] = track;
+		}
 	}
 }
 
@@ -496,51 +768,6 @@ void iohkx::AnimationDecoder::mapSingle(
 	}
 	for (int i = 0; i < clip.nFloatTracks; i++) {
 		floats[i] = &clip.floatTracks[i];
-	}
-}
-
-void objToParent(Bone* bone, Clip& clip, int frame, const hkQsTransform& T, const hkQsTransform& iT)
-{
-	assert(bone && frame >= 0);
-
-	//T is our parent's current pose (in object space) and iT its inverse
-
-	//Calc our recursion transforms
-	BoneTrack* track = bone->index >= 0 ? clip.boneMap[bone->index] : nullptr;
-	//if we have no track, our transform is T * our parent-space ref
-	//if we do have a track, we use our current key
-	hkQsTransform next_T;
-	if (track && !track->keys.isEmpty()) {
-		//as long as we export in object space, we need keys on every frame
-		assert(track->keys.getSize() > frame);
-		//save current
-		next_T = track->keys[frame];
-		//and update
-		track->keys[frame].setMul(iT, track->keys[frame]);
-	}
-	else {
-		next_T.setMul(T, bone->refPose);
-	}
-
-	hkQsTransform next_iT;
-	next_iT.setInverse(next_T);
-
-	//then recurse
-	for (auto&& child : bone->children) {
-		objToParent(child, clip, frame, next_T, next_iT);
-	}
-}
-
-void sanitiseQuats(Clip& clip)
-{
-	for (int i = 0; i < clip.nBoneTracks; i++) {
-		for (int j = 1; j < clip.boneTracks[i].keys.getSize(); j++) {
-			auto&& thisR = clip.boneTracks[i].keys[j].m_rotation.m_vec;
-			auto&& prevR = clip.boneTracks[i].keys[j - 1].m_rotation.m_vec;
-			if (thisR.dot4(prevR) < 0.0f) {
-				thisR.setNeg4(thisR);
-			}
-		}
 	}
 }
 

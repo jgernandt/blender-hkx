@@ -18,12 +18,15 @@ namespace iohkx
 		const AnimationData& get() const { return m_data; }
 
 	private:
+		void annotate(hkaAnimation* animation);
 		void mapPairedComp(
-			hkaAnimationBinding* binding, 
+			hkaAnimationBinding* binding,
+			hkaAnimation* animation,
 			std::vector<std::pair<BoneTrack*, Bone*>>& bones,
 			std::vector<FloatTrack*>& floats);
 		void mapSingleComp(
 			hkaAnimationBinding* binding,
+			hkaAnimation* animation,
 			std::vector<std::pair<BoneTrack*, Bone*>>& bones,
 			std::vector<FloatTrack*>& floats);
 		void mapPaired(

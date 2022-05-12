@@ -20,7 +20,7 @@ const char* TYPE_TRANSFORM = "transform";
 
 const char* ATTR_FRAMES = "frames";
 const char* ATTR_FRAMERATE = "frameRate";
-const char* ATTR_BLENDMODE = "blendMode";
+const char* ATTR_ADDITIVE = "additive";
 const char* ATTR_SKELETON = "skeleton";
 const char* ATTR_REFPOSE = "refPose";
 const char* ATTR_FRAME = "frame";
@@ -57,21 +57,29 @@ static void readTransformTrack(pugi::xml_node node, iohkx::AnimationData& data)
 
 	assert(clip.skeleton);
 
-	//look for this bone in the skeleton
-	auto it = clip.skeleton->boneIndex.find(node.attribute("name").value());
-	if (it != clip.skeleton->boneIndex.end()) {
-		//This is an actual bone
+	BoneTrack* track = nullptr;
+	if (strcmp(node.attribute("name").value(), ROOT_BONE) == 0) {
+		//this is the root bone
+		track = clip.rootTransform;
+		track->target = clip.skeleton->rootBone;
+	}
+	else {
+		//look for this bone in the skeleton
+		auto it = clip.skeleton->boneIndex.find(node.attribute("name").value());
+		if (it != clip.skeleton->boneIndex.end()) {
+			//This bone is driven by Havok. Use the next available track for it.
+			track = &clip.boneTracks[clip.nBoneTracks];
+			track->target = it->second;
+			clip.boneMap[it->second->index] = track;
 
-		//Fill out the next track
-		clip.boneTracks[clip.nBoneTracks].target = it->second;
-		clip.boneTracks[clip.nBoneTracks].keys.reserve(data.frames);
-		clip.boneMap[it->second->index] = &clip.boneTracks[clip.nBoneTracks];
+			clip.nBoneTracks++;
+		}
+		//else ignore
+	}
 
-		auto&& keys = clip.boneTracks[clip.nBoneTracks].keys;
-
-		clip.nBoneTracks++;
-
+	if (track) {
 		//Add keys
+		track->keys.reserve(data.frames);
 		for (xml_node key = node.child(TYPE_TRANSFORM); key; key = key.next_sibling(TYPE_TRANSFORM)) {
 
 			float raw[10];
@@ -84,13 +92,13 @@ static void readTransformTrack(pugi::xml_node node, iohkx::AnimationData& data)
 
 			//Convert to parent space:
 			//left multiply by the inverse of the parent bone's current pose
-			
+
 			//Which means that we must either do this in Blender, or have Blender
 			//ensure that the bones are exported in descending order (which we don't!).
 
 			//Or do it in a separate loop after this one. <- this
 
-			keys.pushBack(hkQsTransform(loc, rot, scl));
+			track->keys.pushBack(hkQsTransform(loc, rot, scl));
 		}
 	}
 }
@@ -106,10 +114,11 @@ static void readAnimation(
 	data.clips.back().skeleton = data.clips.size() == 1 ? skeletons.front() : skeletons.back();
 
 	//Reserve memory for tracks
-	data.clips.front().boneTracks = new BoneTrack[data.clips.front().skeleton->nBones];
-	data.clips.front().floatTracks = new FloatTrack[data.clips.front().skeleton->nFloats];
-	data.clips.front().boneMap.resize(data.clips.front().skeleton->nBones, nullptr);
-	data.clips.front().floatMap.resize(data.clips.front().skeleton->nFloats, nullptr);
+	data.clips.back().rootTransform = new BoneTrack;
+	data.clips.back().boneTracks = new BoneTrack[data.clips.front().skeleton->nBones];
+	data.clips.back().floatTracks = new FloatTrack[data.clips.front().skeleton->nFloats];
+	data.clips.back().boneMap.resize(data.clips.front().skeleton->nBones, nullptr);
+	data.clips.back().floatMap.resize(data.clips.front().skeleton->nFloats, nullptr);
 
 	//for each track
 	for (xml_node track = node.child(NODE_TRACK); track; track = track.next_sibling(NODE_TRACK)) {
@@ -120,56 +129,6 @@ static void readAnimation(
 		else if (strcmp(type.value(), TYPE_FLOAT) == 0) {
 			readFloatTrack(track, data);
 		}
-	}
-}
-
-void iohkx::XMLInterface::read(
-	const char* fileName, 
-	const std::vector<Skeleton*>& skeletons, 
-	AnimationData& data)
-{
-	xml_document doc;
-	xml_parse_result result = doc.load_file(fileName);
-	if (result.status != status_ok) {
-		throw Exception(ERR_INVALID_INPUT, "Failed to load XML");
-	}
-	
-	xml_node root = doc.child(NODE_FILE);
-	if (root) {
-		if (root.attribute("version").as_int(-1) == 1) {
-			for (xml_node node = root.child(TYPE_INT); node; node = node.next_sibling(TYPE_INT)) {
-				xml_attribute name = node.attribute("name");
-				if (strcmp(name.value(), ATTR_FRAMES) == 0) {
-					data.frames = node.first_child().text().as_int(-1);
-				}
-				else if (strcmp(name.value(), ATTR_FRAMERATE) == 0) {
-					data.frameRate = node.first_child().text().as_int(-1);
-				}
-			}
-			for (xml_node node = root.child(TYPE_STRING); node; node = node.next_sibling(TYPE_STRING)) {
-				if (strcmp(node.attribute("name").value(), ATTR_BLENDMODE) == 0) {
-					data.blendMode = node.child_value();
-					break;
-				}
-			}
-
-			if (data.frames < 0)
-				throw Exception(ERR_INVALID_INPUT, "Missing frames value");
-
-			if (data.frames < 0)
-				throw Exception(ERR_INVALID_INPUT, "Missing frame rate value");
-
-			if (data.blendMode.empty())
-				throw Exception(ERR_INVALID_INPUT, "Missing blend mode value");
-
-			for (xml_node clip = root.child(NODE_ANIMATION); 
-					clip; 
-					clip = clip.next_sibling(NODE_ANIMATION)) {
-				readAnimation(clip, skeletons, data);
-			}
-		}
-		else
-			throw Exception(ERR_INVALID_INPUT, "Unknown version");
 	}
 }
 
@@ -230,6 +189,69 @@ static void appendBone(pugi::xml_node node, Bone* bone)
 		appendBone(child, bone->children[i]);
 }
 
+static void appendTrack(pugi::xml_node node, BoneTrack* track)
+{
+	assert(track->target);
+
+	xml_node child = node.append_child(NODE_TRACK);
+	child.append_attribute("name").set_value(track->target->name.c_str());
+	child.append_attribute("type").set_value(TYPE_TRANSFORM);
+
+	for (int f = 0; f < track->keys.getSize(); f++) {
+		//Set key name to frame index
+		char buf[8];
+		sprintf_s(buf, sizeof(buf), "%d", f);
+		appendTransform(child, buf, track->keys[f]);
+	}
+}
+
+void iohkx::XMLInterface::read(
+	const char* fileName,
+	const std::vector<Skeleton*>& skeletons,
+	AnimationData& data)
+{
+	xml_document doc;
+	xml_parse_result result = doc.load_file(fileName);
+	if (result.status != status_ok) {
+		throw Exception(ERR_INVALID_INPUT, "Failed to load XML");
+	}
+
+	xml_node root = doc.child(NODE_FILE);
+	if (root) {
+		if (root.attribute("version").as_int(-1) == 1) {
+			for (xml_node node = root.child(TYPE_INT); node; node = node.next_sibling(TYPE_INT)) {
+				xml_attribute name = node.attribute("name");
+				if (strcmp(name.value(), ATTR_FRAMES) == 0) {
+					data.frames = node.first_child().text().as_int(-1);
+				}
+				else if (strcmp(name.value(), ATTR_FRAMERATE) == 0) {
+					data.frameRate = node.first_child().text().as_int(-1);
+				}
+			}
+			for (xml_node node = root.child(TYPE_STRING); node; node = node.next_sibling(TYPE_STRING)) {
+				if (strcmp(node.attribute("name").value(), ATTR_ADDITIVE) == 0) {
+					data.additive = _stricmp(node.child_value(), "true") == 0;
+					break;
+				}
+			}
+
+			if (data.frames < 0)
+				throw Exception(ERR_INVALID_INPUT, "Missing frames value");
+
+			if (data.frames < 0)
+				throw Exception(ERR_INVALID_INPUT, "Missing frame rate value");
+
+			for (xml_node clip = root.child(NODE_ANIMATION);
+				clip;
+				clip = clip.next_sibling(NODE_ANIMATION)) {
+				readAnimation(clip, skeletons, data);
+			}
+		}
+		else
+			throw Exception(ERR_INVALID_INPUT, "Unknown version");
+	}
+}
+
 void iohkx::XMLInterface::write(
 	const AnimationData& data, const char* fileName)
 {
@@ -246,7 +268,7 @@ void iohkx::XMLInterface::write(
 	//Add shared attributes
 	appendi(root, ATTR_FRAMES, data.frames);
 	appendi(root, ATTR_FRAMERATE, data.frameRate);
-	appends(root, ATTR_BLENDMODE, data.blendMode.c_str());
+	appends(root, ATTR_ADDITIVE, data.additive ? "true" : "false");
 
 	//Add skeleton elements
 	std::vector<const Skeleton*> addedSkeletons;
@@ -267,6 +289,10 @@ void iohkx::XMLInterface::write(
 		skeleton.append_attribute("name").set_value(buf);
 		
 		appendBone(skeleton, data.clips[i].skeleton->rootBone);
+
+		//for (auto&& add : data.clips[i].addenda) {
+		//	appendBone(skeleton, add.bone.get());
+		//}
 	}
 
 	//Animations
@@ -283,20 +309,15 @@ void iohkx::XMLInterface::write(
 		appends(anim, ATTR_SKELETON, clip.skeleton->name.c_str());
 
 		//Bone tracks
-		for (int t = 0; t < clip.nBoneTracks; t++) {
-			BoneTrack* track = &clip.boneTracks[t];
-			assert(track->target);
-
-			xml_node node = anim.append_child(NODE_TRACK);
-			node.append_attribute("name").set_value(track->target->name.c_str());
-			node.append_attribute("type").set_value(TYPE_TRANSFORM);
-
-			for (int f = 0; f < track->keys.getSize(); f++) {
-				//Set key name to frame index
-				sprintf_s(buf, sizeof(buf), "%d", f);
-				appendTransform(node, buf, track->keys[f]);
-			}
+		if (clip.rootTransform) {
+			appendTrack(anim, clip.rootTransform);
 		}
+		for (int t = 0; t < clip.nBoneTracks; t++) {
+			appendTrack(anim, &clip.boneTracks[t]);
+		}
+		//for (auto&& add : data.clips[i].addenda) {
+		//	appendTrack(anim, add.track.get());
+		//}
 
 		//Float tracks
 		for (int t = 0; t < clip.nFloatTracks; t++) {

@@ -27,58 +27,71 @@ namespace iohkx
 		LAYOUT_AMD64
 	};
 
+	//Name of the dummy bone used to represent skeleton transforms
+	constexpr const char* ROOT_BONE = "NPC";
+
 	//Need to be on the heap for refs to work
 	struct Bone
 	{
-		int index;
+		int index{ -1 };
 		std::string name;
 		//parent-space rest pose
 		hkQsTransform refPose;
 		//object-space rest pose
 		hkQsTransform refPoseObj;
 
-		Bone* parent;
+		Bone* parent{ nullptr };
 		std::vector<Bone*> children;
 	};
 
 	//Don't need to be on the heap, but do it for consistency
 	struct Float
 	{
-		int index;
+		int index{ -1 };
 		std::string name;
-		float refValue;
+		float refValue{ 0.0f };
 	};
 
 	struct Skeleton
 	{
 		std::string name;
 
-		int nBones;
-		Bone* bones;
+		int nBones{ 0 };
+		Bone* bones{ nullptr };
 		std::map<std::string, Bone*> boneIndex;
 
-		int nFloats;
-		Float* floats;
+		int nFloats{ 0 };
+		Float* floats{ nullptr };
 		std::map<std::string, Float*> floatIndex;
 
-		Bone* rootBone;
+		Bone* rootBone{ nullptr };
 	};
 
 	struct BoneTrack
 	{
-		const Bone* target;
+		const Bone* target{ nullptr };
 		hkArray<hkQsTransform> keys;
 	};
 
 	struct FloatTrack
 	{
-		const Float* target;
+		const Float* target{ nullptr };
 		hkArray<hkReal> keys;
 	};
+
+	//A way of adding bones to the skeleton,
+	// but I don't think that's a good idea.
+	//struct Addendum
+	//{
+	//	std::unique_ptr<Bone> bone;
+	//	std::unique_ptr<BoneTrack> track;
+	//};
 
 	struct Clip
 	{
 		const Skeleton* skeleton{ nullptr };
+
+		BoneTrack* rootTransform{ nullptr };
 
 		int nBoneTracks{ 0 };
 		BoneTrack* boneTracks{ nullptr };
@@ -89,13 +102,15 @@ namespace iohkx
 		//maps bone index to track
 		std::vector<BoneTrack*> boneMap;
 		std::vector<FloatTrack*> floatMap;
+
+		//std::vector<Addendum> addenda;
 	};
 
 	struct AnimationData
 	{
-		int frames;
-		int frameRate;
-		std::string blendMode;
+		int frames{ 0 };
+		int frameRate{ 30 };
+		bool additive{ false };
 
 		std::vector<Clip> clips;
 	};
