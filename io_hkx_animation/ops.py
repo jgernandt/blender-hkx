@@ -223,6 +223,8 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             return {'CANCELLED'}
         finally:
             #delete tmp file
+            #os.remove(tmp_file)
+            #(might also want to look at the tempfile module)
             pass
         
         return {'FINISHED'}
@@ -385,6 +387,12 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         return armature
 
 
+FORMATS = [
+    ("LE", "Skyrim", "32 bit format for the original Skyrim"), 
+    ("SE", "Skyrim SE", "64 bit format for Skyrim Special Edition"), 
+]
+
+
 class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     bl_label = 'Export'
     bl_idname = 'io_hkx_animation.export'
@@ -395,12 +403,28 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     
     filter_glob: bpy.props.StringProperty(
         default="*.hkx",
-        options={'HIDDEN'})
+        options={'HIDDEN'},
+    )
     
     blend_mode: bpy.props.BoolProperty(
         name="Additive",
         description="Store offsets instead of pose",
-        default=False)
+        default=False,
+    )
+    
+    frame_interval: bpy.props.IntVectorProperty(
+        name="Frame interval",
+        description="First and last frame of the animation",
+        size=2,
+        min=0,
+    )
+    
+    output_format: bpy.props.EnumProperty(
+        items=FORMATS,
+        name="Format",
+        description="Format of the output HKX file",
+        default='SE',
+    )
     
     framerot: mathutils.Matrix
     framerotinv: mathutils.Matrix
@@ -408,6 +432,8 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     def invoke(self, context, event):
         #get the settings and forward to ImportHelper
         self.initsettings(context)
+        self.frame_interval[0] = context.scene.frame_start
+        self.frame_interval[1] = context.scene.frame_end
         return bpy_extras.io_utils.ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
@@ -434,6 +460,10 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             if len(armatures) > 1 and not os.path.exists(self.secondary_skeleton):
                 raise RuntimeError("Secondary skeleton file not found")
             
+            #Make sure we have frames to export
+            if not self.frame_interval[1] > self.frame_interval[0]:
+                raise RuntimeError("Frame interval is empty")
+            
             #Save our custom properties
             for arma, path in zip(armatures, [self.primary_skeleton, self.secondary_skeleton]):
                 arma.data.iohkx.skeleton_path = path
@@ -445,8 +475,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             
             #determine our sampling parameters
             self.framestep = context.scene.render.fps / SAMPLING_RATE
-            self.frame0 = context.scene.frame_start
-            framesteps = context.scene.frame_end - self.frame0
+            framesteps = self.frame_interval[1] - self.frame_interval[0]
         
             #if framerate is not 30 fps, we sample at nearest possible rate and warn
             if context.scene.render.fps != SAMPLING_RATE:
@@ -477,7 +506,13 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                     skels = '"%s"' % (self.primary_skeleton)
                 else:
                     skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
-                args = '"%s" pack "%s" "%s" %s' % (tool, tmp_file, self.filepath, skels)
+                
+                if self.output_format == 'LE':
+                    fmt = "WIN32"
+                else:
+                    fmt = "AMD64"
+                    
+                args = '"%s" pack %s "%s" "%s" %s' % (tool, fmt, tmp_file, self.filepath, skels)
                 
                 print(args)
                 res = subprocess.run(args)
@@ -490,6 +525,8 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             return {'CANCELLED'}
         finally:
             #delete tmp file
+            #os.remove(tmp_file)
+            #(might also want to look at the tempfile module)
             pass
         
         self.report({'INFO'}, "Exported %s successfully" % self.filepath)
@@ -511,7 +548,6 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         #name of skeleton = object name
         ianim.set_skeleton_name(armature.data.iohkx.skeleton_path)
         
-        #tracks = [ianim.add_track(bone.name, "transform") for bone in bones]
         tracks = [ianim.add_transform_track(bone.name) for bone in bones]
         
         #loop over frames, add key for each track
@@ -519,9 +555,9 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         for i in range(self.frames):
             #set current frame (and subframe, if appropriate)
             if context.scene.render.fps == SAMPLING_RATE:
-                context.scene.frame_set(self.frame0 + i)
+                context.scene.frame_set(self.frame_interval[0] + i)
             else:
-                subframe, frame = math.modf(self.frame0 + i * self.framestep)
+                subframe, frame = math.modf(self.frame_interval[0] + i * self.framestep)
                 context.scene.frame_set(int(frame), subframe=subframe)
             
             for bone, track in zip(bones, tracks):
@@ -531,6 +567,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                 #coordinate transforms
                 mat = mathutils.Matrix.LocRotScale(loc, rot, scl).to_4x4() @ self.framerot
                 
+                #Transform to parent-bone space
                 #do this in the converter instead, less double transforming
                 #if bone.parent:
                 #    try:

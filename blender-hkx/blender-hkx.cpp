@@ -1,9 +1,5 @@
 #include "pch.h"
 
-#include <cstring>
-#include <iostream>
-#include <vector>
-
 #include "common.h"
 #include "AnimationDecoder.h"
 #include "HKXInterface.h"
@@ -27,7 +23,6 @@ void unpack(int argc, char* const* argv)
 		HavokEngine engine;
 		HKXInterface hkx;
 
-		std::cout << "---SkeletonLoader starting---\n";
 		SkeletonLoader skeletons;
 
 		for (int i = 0; i < argc - 2; i++) {
@@ -37,19 +32,14 @@ void unpack(int argc, char* const* argv)
 		}
 		if (skeletons.empty())
 			throw Exception(ERR_INVALID_INPUT, "No skeleton found");
-		std::cout << "---SkeletonLoader finished---\n";
 
 		hkRefPtr<hkaAnimationContainer> anim = hkx.load(argv[0]);
 
-		std::cout << "---AnimationDecoder starting---\n";
 		AnimationDecoder animation;
 		animation.decompress(anim, skeletons.get());
-		std::cout << "---AnimationDecoder finished---\n";
 
-		std::cout << "---XMLInterface starting---\n";
 		XMLInterface xml;
 		xml.write(animation.get(), argv[1]);
-		std::cout << "---XMLInterface finished---\n";
 	}
 	else
 		throw Exception(ERR_INVALID_ARGS, "Missing arguments");
@@ -58,39 +48,41 @@ void unpack(int argc, char* const* argv)
 void pack(int argc, char* const* argv)
 {
 	//args
-	//1. input xml
-	//2. output file name
-	//3+. skeleton(s)
-	if (argc >= 3) {
+	//1. format specifier
+	//2. input xml
+	//3. output file name
+	//4+. skeleton(s)
+	if (argc >= 4) {
 		HavokEngine engine;
 		HKXInterface hkx;
 
-		std::cout << "---SkeletonLoader starting---\n";
 		SkeletonLoader skeleton;
 
-		for (int i = 0; i < argc - 2; i++) {
-			hkRefPtr<hkaAnimationContainer> res = hkx.load(argv[i + 2]);
+		for (int i = 0; i < argc - 3; i++) {
+			hkRefPtr<hkaAnimationContainer> res = hkx.load(argv[i + 3]);
 			if (res)
 				skeleton.load(res.val());
 		}
 		if (skeleton.empty())
 			throw Exception(ERR_INVALID_INPUT, "No skeleton found");
-		std::cout << "---SkeletonLoader finished---\n";
 
 		AnimationDecoder animation;
 
-		std::cout << "---XMLInterface starting---\n";
 		XMLInterface xml;
-		xml.read(argv[0], skeleton.get(), animation.get());
-		std::cout << "---XMLInterface finished---\n";
+		xml.read(argv[1], skeleton.get(), animation.get());
 
-		std::cout << "---AnimationDecoder starting---\n";
 		hkRefPtr<hkaAnimationContainer> anim = animation.compress();
-		std::cout << "---AnimationDecoder finished---\n";
 
-		//hkx.m_options.textFormat = true;
-		//hkx.m_options.layout = LAYOUT_WIN32;
-		hkx.save(anim.val(), argv[1]);
+		if (_stricmp(argv[0], "WIN32") == 0) {
+			hkx.m_options.layout = LAYOUT_WIN32;
+		}
+		else if (_stricmp(argv[0], "XML") == 0) {
+			hkx.m_options.textFormat = true;
+		}
+		else {
+			hkx.m_options.layout = LAYOUT_AMD64;
+		}
+		hkx.save(anim.val(), argv[2]);
 	}
 	else
 		throw Exception(ERR_INVALID_ARGS, "Missing arguments");
