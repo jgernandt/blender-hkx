@@ -1,5 +1,6 @@
 import math
 import os
+import subprocess
 
 import bpy
 from bpy_extras.io_utils import axis_conversion
@@ -91,6 +92,8 @@ class HKXIO(bpy.types.Operator):
         exe = os.path.join(os.path.dirname(pref), EXEC_NAME)
         if not os.path.exists(exe):
             raise RuntimeError("Converter tool not found. Check your Addon Preferences.")
+            
+        return exe
     
     def getselected(self, context):
         """Return all selected objects and all selected armatures"""
@@ -140,12 +143,19 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                 self.report({'WARNING'}, "Setting framerate to %s fps" % str(SAMPLING_RATE))
             
             #Look for the converter
-            exe = self.getconverter(context.preferences)
+            tool = self.getconverter(context.preferences)
             
             #Invoke the converter
+            tmp_file = _tmpfilename(self.filepath, context.preferences)
+            skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
+            args = '"%s" unpack "%s" "%s" %s' % (tool, self.filepath, tmp_file, skels)
+            res = subprocess.run(args)
+            
+            #throw if the converter returned non-zero
+            res.check_returncode()
             
             #Load the xml
-            doc = DocumentInterface.open(_tmpfilename(self.filepath))
+            doc = DocumentInterface.open(tmp_file)
             
             #Look up all selected armatures
             selected, armatures = self.getselected(context)
@@ -375,27 +385,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         return armature
 
 
-def _tmpfilename(file_name):
-    root, ext = os.path.splitext(file_name)
-    return root + "-tmp.xml"
-    #return root + "-163498.xml"
-
-_boneNameMap = dict({"WEAPON": "Weapon", "SHIELD": "Shield", "QUIVER": "Quiver"})
-
-
-def _mapname(name):
-    #Some names differ between nifs and hkxs. 
-    #Specifically Weapon, Shield and Quiver, which are all caps in nif.
-    #We want to output the hkx name.
-    
-    #This could be made configurable, similar to what niftools do.
-    
-    if name in _boneNameMap:
-        return _boneNameMap[name]
-    else:
-        return name
-
-
 class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     bl_label = 'Export'
     bl_idname = 'io_hkx_animation.export'
@@ -427,7 +416,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             self.axisconversion(to_forward=self.bone_forward, to_up=self.bone_up)
             
             #Look for the converter
-            exe = self.getconverter(context.preferences)
+            tool = self.getconverter(context.preferences)
             
             #Look up all selected armatures
             selected, armatures = self.getselected(context)
@@ -480,10 +469,21 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             
             if len(doc.animations) != 0:
                 #write xml
-                doc.save(_tmpfilename(self.filepath))
+                tmp_file = _tmpfilename(self.filepath, context.preferences)
+                doc.save(tmp_file)
                 
-                #invoke exe
-                raise RuntimeError("TODO")
+                #invoke converter
+                if len(doc.animations) == 1:
+                    skels = '"%s"' % (self.primary_skeleton)
+                else:
+                    skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
+                args = '"%s" pack "%s" "%s" %s' % (tool, tmp_file, self.filepath, skels)
+                
+                print(args)
+                res = subprocess.run(args)
+                
+                #throw if the converter returned non-zero
+                res.check_returncode()
             
         except Exception as e:
             self.report({'ERROR'}, str(e))
@@ -551,7 +551,36 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         
         #restore state
         context.scene.frame_set(current_frame)
+
+
+def _tmpfilename(file_name, preferences):
+    #read dir from preferences
+    loc = preferences.addons[__package__].preferences.temp_location
     
+    #Use converter dir if no temp location is set
+    if loc == "":
+        loc = preferences.addons[__package__].preferences.converter_tool
+    
+    root, ext = os.path.splitext(os.path.basename(file_name))
+    #return loc/fileroot.tmp
+    return os.path.join(loc, root) + ".tmp"
+
+
+_boneNameMap = dict({"WEAPON": "Weapon", "SHIELD": "Shield", "QUIVER": "Quiver"})
+
+
+def _mapname(name):
+    #Some names differ between nifs and hkxs. 
+    #Specifically Weapon, Shield and Quiver, which are all caps in nif.
+    #We want to output the hkx name.
+    
+    #This could be made configurable, similar to what niftools do.
+    
+    if name in _boneNameMap:
+        return _boneNameMap[name]
+    else:
+        return name
+
 
 def exportop(self, context):
     self.layout.operator(HKXExport.bl_idname, text="Havok Animation (.hkx)")
