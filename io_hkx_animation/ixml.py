@@ -6,7 +6,7 @@ import mathutils
 TAG_ANIMATION = "animation"
 TAG_ANNOTATION = "annotation"
 TAG_BONE = "bone"
-TAG_BOOL = "bone"
+TAG_BOOL = "bool"
 TAG_FLOAT = "float"
 TAG_FLOATSLOT = "slot"
 TAG_INT = "int"
@@ -30,7 +30,7 @@ class Track(Enum):
     FLOAT = TAG_FLOAT
     TRANSFORM = TAG_TRANSFORM
 
-def unpacktransform(string):
+def unpack_transform(string):
     floats = [float(word) for word in string.split()]
     
     if len(floats) == 10:
@@ -142,7 +142,7 @@ class TransformKeyInterface(KeyInterface):
     
     def __init__(self, doc, node):
         super().__init__(doc, node)
-        self.value = unpacktransform(node.firstChild.data)
+        self.value = unpack_transform(node.firstChild.data)
     
     def set_value(self, loc, rot, scl):
         self.value = loc, rot, scl
@@ -277,7 +277,7 @@ class SkeletonInterface(DOMInterface):
         
         if e:
             if isbone:
-                self.reference = unpacktransform(e.firstChild.data)
+                self.reference = unpack_transform(e.firstChild.data)
             else:
                 self.reference = float(e.firstChild.data)
         #create if missing

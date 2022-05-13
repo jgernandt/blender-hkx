@@ -324,12 +324,6 @@ void iohkx::XMLInterface::read(
 			data.frameRate = readi(root, ATTR_FRAMERATE);
 			data.additive = readb(root, ATTR_ADDITIVE);
 
-			if (data.frames < 0)
-				throw Exception(ERR_INVALID_INPUT, "Missing frames value");
-
-			if (data.frames < 0)
-				throw Exception(ERR_INVALID_INPUT, "Missing frame rate value");
-
 			for (xml_node clip = root.child(NODE_ANIMATION);
 				clip;
 				clip = clip.next_sibling(NODE_ANIMATION)) {

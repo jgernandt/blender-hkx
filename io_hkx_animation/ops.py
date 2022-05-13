@@ -47,7 +47,7 @@ class HKXIO(bpy.types.Operator):
         #update=callbackfcn
     )
     
-    def initsettings(self, context):
+    def init_settings(self, context):
         #set skeleton path(s) to that of the active armature(s) (default if none)
         
         #primary is the active armature
@@ -78,7 +78,7 @@ class HKXIO(bpy.types.Operator):
         if self.secondary_skeleton == "":
             self.secondary_skeleton = context.preferences.addons[__package__].preferences.default_skeleton
     
-    def axisconversion(self, from_forward='Y', from_up='Z', to_forward='Y', to_up='Z'):
+    def axis_conversion(self, from_forward='Y', from_up='Z', to_forward='Y', to_up='Z'):
         #this throws if axes are invalid
         self.framerot = axis_conversion(
                 from_forward=from_forward, 
@@ -87,7 +87,7 @@ class HKXIO(bpy.types.Operator):
                 to_up=to_up).to_4x4()
         self.framerotinv = self.framerot.transposed()
     
-    def getconverter(self, preferences):
+    def get_converter(self, preferences):
         pref = preferences.addons[__package__].preferences.converter_tool
         exe = os.path.join(os.path.dirname(pref), EXEC_NAME)
         if not os.path.exists(exe):
@@ -95,7 +95,7 @@ class HKXIO(bpy.types.Operator):
             
         return exe
     
-    def getselected(self, context):
+    def get_selected(self, context):
         """Return all selected objects and all selected armatures"""
         selected = context.view_layer.objects.selected
         active = context.view_layer.objects.active
@@ -129,13 +129,13 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
     
     def invoke(self, context, event):
         #get the settings and forward to ImportHelper
-        self.initsettings(context)
+        self.init_settings(context)
         return bpy_extras.io_utils.ImportHelper.invoke(self, context, event)
     
     def execute(self, context):
         try:
             #setup axis conversion
-            self.axisconversion(from_forward=self.bone_forward, from_up=self.bone_up)
+            self.axis_conversion(from_forward=self.bone_forward, from_up=self.bone_up)
             
             #Set fps to 30 (and warn if it wasn't)
             if context.scene.render.fps != SAMPLING_RATE:
@@ -143,7 +143,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                 self.report({'WARNING'}, "Setting framerate to %s fps" % str(SAMPLING_RATE))
             
             #Look for the converter
-            tool = self.getconverter(context.preferences)
+            tool = self.get_converter(context.preferences)
             
             #Invoke the converter
             tmp_file = _tmpfilename(self.filepath, context.preferences)
@@ -158,7 +158,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             doc = DocumentInterface.open(tmp_file)
             
             #Look up all selected armatures
-            selected, armatures = self.getselected(context)
+            selected, armatures = self.get_selected(context)
             
             if len(armatures) == 0:
                 #import armatures(s) from file
@@ -173,7 +173,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                     
                 #create new armatures
                 paths = [self.primary_skeleton, self.secondary_skeleton]
-                armatures = [self.importskeleton(i, context, p) for i, p in zip(doc.skeletons, paths)]
+                armatures = [self.import_skeleton(i, context, p) for i, p in zip(doc.skeletons, paths)]
                 if len(armatures) == 0:
                     raise RuntimeError("File contains no skeletons")
                 
@@ -198,7 +198,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             active_obj = context.view_layer.objects.active
                 
             #create new actions
-            actions = [self.importanimation(i, context) for i in doc.animations]
+            actions = [self.import_animation(i, context) for i in doc.animations]
             
             #If there are more actions than armatures, duplicate active armature
             while len(actions) > len(armatures):
@@ -228,7 +228,84 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         return {'FINISHED'}
     
-    def importfloat(self, itrack, action):
+    def find_connected(self, bone, children):
+        """Find the child (if any) that continues our bone chain, and the distance to it."""
+        #A connected child should be located on our positive y axis, to within roundoff error.
+        epsilon = 1e-5
+        our_loc = bone.matrix.to_translation()
+        for child in children:
+            separation = child.matrix.to_translation() - our_loc
+            #reject bones that are too close to us
+            if separation.length > epsilon:
+                #For separation to be parallel to our y axis, the scalar vector rejection
+                #of separation from y should be less than epsilon.
+                #It might be simpler to just check the angle between separation and y,
+                #but that makes the error threshold slightly more complicated instead.
+                assert abs(1.0 - bone.y_axis.length) < epsilon, "invalid assumption"
+                scalar_projection = separation.dot(bone.y_axis)
+                #reject bones on the negative side
+                if scalar_projection >= 0.0:
+                    rejection = separation - scalar_projection * bone.y_axis
+                    if rejection.length < epsilon:
+                        return child, separation.length
+        
+        #we found no connected child
+        return None, None
+    
+    def import_animation(self, ianim, context):
+        
+        #create a new action, named as file
+        d, name = os.path.split(self.filepath)
+        root, ext = os.path.splitext(name)
+        action = bpy.data.actions.new(name=root)
+        #armature.animation_data.action = action
+        
+        #import the tracks
+        for track in ianim.tracks():
+            if track.datatype == Track.TRANSFORM:
+                self.import_transform(track, action)
+            elif track.datatype == Track.FLOAT:
+                self.import_float(track, action)
+        
+        #import markers
+        for annotation in ianim.annotations():
+            marker = action.pose_markers.new(annotation.text)
+            marker.frame = annotation.frame
+        
+        return action
+    
+    def import_bone(self, ibone, parent, armature):
+        #add bone to armature
+        bone = armature.data.edit_bones.new(ibone.name)
+        bone.length = 1.0
+        
+        #transform
+        loc, rot, scl = ibone.reference
+        loc /= self.length_scale
+        mat = mathutils.Matrix.LocRotScale(loc, rot, scl)
+        if parent:
+            bone.parent = parent
+            #bone.matrix = parent.matrix @ mat
+        #else:
+            #bone.matrix = mat
+        bone.matrix = mat @ self.framerot
+        
+        #recurse
+        children = [self.import_bone(i, bone, armature) for i in ibone.bones()]
+        
+        #axis conversion (most efficient if done leaf->root)
+        #(was, until we changed the input format)
+        #bone.matrix = bone.matrix @ self.framerot
+        
+        #set length
+        child, length = self.find_connected(bone, children)
+        if child:
+            bone.length = length
+        #else leave it at 1
+        
+        return bone
+    
+    def import_float(self, itrack, action):
         #create f-curve
         f = action.fcurves.new('["%s"]' % itrack.name)
         
@@ -238,7 +315,39 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         f.update()
     
-    def importtransform(self, itrack, action):
+    def import_skeleton(self, iskeleton, context, path):
+        #create armature object
+        data = bpy.data.armatures.new(name=iskeleton.name)
+        armature = bpy.data.objects.new(iskeleton.name, data)
+        context.scene.collection.objects.link(armature)
+        
+        #store our custom properties
+        data.iohkx.skeleton_path = path
+        data.iohkx.bone_forward = self.bone_forward
+        data.iohkx.bone_up = self.bone_up
+        
+        #start editing armature
+        context.view_layer.objects.active = armature
+        bpy.ops.object.mode_set(mode='EDIT', toggle=False)
+        
+        #add bones
+        for ibone in iskeleton.bones():
+            self.import_bone(ibone, None, armature)
+        
+        #end edit
+        bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+        
+        #add float slots (custom props)
+        for ifloat in iskeleton.floats():
+            armature[ifloat.name] = ifloat.reference
+        
+        #display settings (optional?)
+        data.display_type = 'STICK'
+        data.show_axes = True
+        
+        return armature
+    
+    def import_transform(self, itrack, action):
         
         #create ActionGroup
         group = action.groups.new(itrack.name)
@@ -291,115 +400,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         scl_x.update()
         scl_y.update()
         scl_z.update()
-    
-    def importanimation(self, ianim, context):
-        
-        #create a new action, named as file
-        d, name = os.path.split(self.filepath)
-        root, ext = os.path.splitext(name)
-        action = bpy.data.actions.new(name=root)
-        #armature.animation_data.action = action
-        
-        #import the tracks
-        for track in ianim.tracks():
-            if track.datatype == Track.TRANSFORM:
-                self.importtransform(track, action)
-            elif track.datatype == Track.FLOAT:
-                self.importfloat(track, action)
-        
-        #import markers
-        for annotation in ianim.annotations():
-            marker = action.pose_markers.new(annotation.text)
-            marker.frame = annotation.frame
-        
-        return action
-    
-    def findconnected(self, bone, children):
-        """Find the child (if any) that continues our bone chain, and the distance to it."""
-        #A connected child should be located on our positive y axis, to within roundoff error.
-        epsilon = 1e-5
-        our_loc = bone.matrix.to_translation()
-        for child in children:
-            separation = child.matrix.to_translation() - our_loc
-            #reject bones that are too close to us
-            if separation.length > epsilon:
-                #For separation to be parallel to our y axis, the scalar vector rejection
-                #of separation from y should be less than epsilon.
-                #It might be simpler to just check the angle between separation and y,
-                #but that makes the error threshold slightly more complicated instead.
-                assert abs(1.0 - bone.y_axis.length) < epsilon, "invalid assumption"
-                scalar_projection = separation.dot(bone.y_axis)
-                #reject bones on the negative side
-                if scalar_projection >= 0.0:
-                    rejection = separation - scalar_projection * bone.y_axis
-                    if rejection.length < epsilon:
-                        return child, separation.length
-        
-        #we found no connected child
-        return None, None
-    
-    def importbone(self, ibone, parent, armature):
-        #add bone to armature
-        bone = armature.data.edit_bones.new(ibone.name)
-        bone.length = 1.0
-        
-        #transform
-        loc, rot, scl = ibone.reference
-        loc /= self.length_scale
-        mat = mathutils.Matrix.LocRotScale(loc, rot, scl)
-        if parent:
-            bone.parent = parent
-            #bone.matrix = parent.matrix @ mat
-        #else:
-            #bone.matrix = mat
-        bone.matrix = mat @ self.framerot
-        
-        #recurse
-        children = [self.importbone(i, bone, armature) for i in ibone.bones()]
-        
-        #axis conversion (most efficient if done leaf->root)
-        #(was, until we changed the input format)
-        #bone.matrix = bone.matrix @ self.framerot
-        
-        #set length
-        child, length = self.findconnected(bone, children)
-        if child:
-            bone.length = length
-        #else leave it at 1
-        
-        return bone
-    
-    def importskeleton(self, iskeleton, context, path):
-        #create armature object
-        data = bpy.data.armatures.new(name=iskeleton.name)
-        armature = bpy.data.objects.new(iskeleton.name, data)
-        context.scene.collection.objects.link(armature)
-        
-        #store our custom properties
-        data.iohkx.skeleton_path = path
-        data.iohkx.bone_forward = self.bone_forward
-        data.iohkx.bone_up = self.bone_up
-        
-        #start editing armature
-        context.view_layer.objects.active = armature
-        bpy.ops.object.mode_set(mode='EDIT', toggle=False)
-        
-        #add bones
-        for ibone in iskeleton.bones():
-            self.importbone(ibone, None, armature)
-        
-        #end edit
-        bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-        
-        #add float slots (custom props)
-        for ifloat in iskeleton.floats():
-            armature[ifloat.name] = ifloat.reference
-        
-        #display settings (optional?)
-        data.display_type = 'STICK'
-        data.show_axes = True
-        
-        return armature
 
 
 FORMATS = [
@@ -446,7 +446,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     
     def invoke(self, context, event):
         #get the settings and forward to ImportHelper
-        self.initsettings(context)
+        self.init_settings(context)
         self.frame_interval[0] = context.scene.frame_start
         self.frame_interval[1] = context.scene.frame_end
         return bpy_extras.io_utils.ExportHelper.invoke(self, context, event)
@@ -454,13 +454,13 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
     def execute(self, context):
         try:
             #setup axis conversion
-            self.axisconversion(to_forward=self.bone_forward, to_up=self.bone_up)
+            self.axis_conversion(to_forward=self.bone_forward, to_up=self.bone_up)
             
             #Look for the converter
-            tool = self.getconverter(context.preferences)
+            tool = self.get_converter(context.preferences)
             
             #Look up all selected armatures
-            selected, armatures = self.getselected(context)
+            selected, armatures = self.get_selected(context)
             active = context.view_layer.objects.active
             #fail if none
             if len(armatures) == 0 or not active in armatures:
@@ -506,7 +506,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             
             #add animations
             for armature in armatures:
-                self.exportanimation(doc, armature, context)
+                self.export_animation(doc, armature, context)
                 
             #restore active state
             context.view_layer.objects.active = active
@@ -526,9 +526,6 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                     fmt = "WIN32"
                 else:
                     fmt = "AMD64"
-                
-                #debug
-                fmt = "XML"
                 
                 args = '"%s" pack %s "%s" "%s" %s' % (tool, fmt, tmp_file, self.filepath, skels)
                 
@@ -550,7 +547,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         self.report({'INFO'}, "Exported %s successfully" % self.filepath)
         return {'FINISHED'}
     
-    def exportanimation(self, document, armature, context):
+    def export_animation(self, document, armature, context):
         
         #activate this armature
         context.view_layer.objects.active = armature
@@ -647,22 +644,6 @@ def _tmpfilename(file_name, preferences):
     root, ext = os.path.splitext(os.path.basename(file_name))
     #return loc/fileroot.tmp
     return os.path.join(loc, root) + ".tmp"
-
-
-_boneNameMap = dict({"WEAPON": "Weapon", "SHIELD": "Shield", "QUIVER": "Quiver"})
-
-
-def _mapname(name):
-    #Some names differ between nifs and hkxs. 
-    #Specifically Weapon, Shield and Quiver, which are all caps in nif.
-    #We want to output the hkx name.
-    
-    #This could be made configurable, similar to what niftools do.
-    
-    if name in _boneNameMap:
-        return _boneNameMap[name]
-    else:
-        return name
 
 
 def exportop(self, context):

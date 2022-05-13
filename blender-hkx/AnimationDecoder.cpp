@@ -7,6 +7,45 @@ constexpr int FRAME_RATE = 30;
 using namespace iohkx;
 
 //Transform the bone and its descendants to parent-space transform T
+static void objToBone(Bone* bone, Clip& clip, int frame,
+	const hkQsTransform& T, const hkQsTransform& iT)
+{
+	assert(bone && frame >= 0);
+
+	//T is our parent's current pose (in object space) and iT its inverse
+
+	//Calc our recursion transforms
+	BoneTrack* track = bone->index >= 0 ? clip.boneMap[bone->index] : clip.rootTransform;
+	//if we have no track, our transform is T * our parent-space ref
+	//if we do have a track, we use our current key
+	hkQsTransform next_T;
+	if (track && !track->keys.isEmpty()) {
+		//as long as we export in object space, we need keys on every frame
+		assert(track->keys.getSize() > frame);
+		//save current
+		next_T = track->keys[frame];
+		//and update
+		//we want
+		//inv ref pose * inv parent current pose * current pose
+		hkQsTransform iRef;
+		iRef.setInverse(track->target->refPose);
+		track->keys[frame].setMul(iT, track->keys[frame]);
+		track->keys[frame].setMul(iRef, track->keys[frame]);
+	}
+	else {
+		next_T.setMul(T, bone->refPose);
+	}
+
+	hkQsTransform next_iT;
+	next_iT.setInverse(next_T);
+
+	//then recurse
+	for (auto&& child : bone->children) {
+		objToBone(child, clip, frame, next_T, next_iT);
+	}
+}
+
+//Transform the bone and its descendants to parent-space transform T
 static void objToParent(Bone* bone, Clip& clip, int frame, 
 	const hkQsTransform& T, const hkQsTransform& iT)
 {
@@ -98,6 +137,8 @@ hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 		//Nothing to export
 		return hkRefPtr<hkaAnimationContainer>();
 
+	binding->m_blendHint = m_data.additive ? 
+		hkaAnimationBinding::ADDITIVE : hkaAnimationBinding::NORMAL;
 	raw->m_duration = static_cast<float>(m_data.frames - 1) / m_data.frameRate;
 	raw->m_numberOfTransformTracks = nBones;
 	raw->m_numberOfFloatTracks = nFloats;
@@ -238,17 +279,21 @@ void iohkx::AnimationDecoder::decompress(
 	for (int f = 0; f < m_data.frames; f++) {
 		anim->sampleTracks((float)f / FRAME_RATE, tmpT.begin(), tmpF.begin(), HK_NULL);
 
-		for (int i = 0; i < tmpT.getSize(); i++) {
-			//convert to bone-space,
-			//=inverse of parent-space ref pose * sample pose
-			if (map.m_bones[i]) {
-				assert(map.m_bones[i]->target);
+		//convert tmpT to bone-space
+		if (!m_data.additive) {
+			for (int i = 0; i < tmpT.getSize(); i++) {
+				if (map.m_bones[i]) {
+					assert(map.m_bones[i]->target);
 
-				hkQsTransform inv;
-				inv.setInverse(map.m_bones[i]->target->refPose);
-				tmpT[i].setMul(inv, tmpT[i]);
+					//inverse of parent-space ref pose
+					hkQsTransform inv;
+					inv.setInverse(map.m_bones[i]->target->refPose);
+					//bone space = inv * tmpT
+					tmpT[i].setMul(inv, tmpT[i]);
+				}
 			}
 		}
+		//else it is already in bone space!
 
 		hkaSkeletonUtils::normalizeRotations(tmpT.begin(), tmpT.getSize());
 
@@ -314,11 +359,19 @@ void iohkx::AnimationDecoder::preProcess()
 {
 	hkQsTransform I(hkQsTransform::IDENTITY);
 	for (auto&& clip : m_data.clips) {
+		//We expect transforms to be in object space now
 
-		//Transform all bone transforms to parent space
-		//(we expect them to be in object space now)
-		for (int f = 0; f < m_data.frames; f++) {
-			objToParent(clip.skeleton->rootBone, clip, f, I, I);
+		if (m_data.additive) {
+			//Transform to bone space
+			for (int f = 0; f < m_data.frames; f++) {
+				objToBone(clip.skeleton->rootBone, clip, f, I, I);
+			}
+		}
+		else {
+			//Transform to parent-bone space
+			for (int f = 0; f < m_data.frames; f++) {
+				objToParent(clip.skeleton->rootBone, clip, f, I, I);
+			}
 		}
 
 		//set all rotations to the shortest distance from previous key
