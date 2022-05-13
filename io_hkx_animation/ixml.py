@@ -4,6 +4,7 @@ import xml.dom.minidom as xml
 import mathutils
 
 TAG_ANIMATION = "animation"
+TAG_ANNOTATION = "annotation"
 TAG_BONE = "bone"
 TAG_FLOAT = "float"
 TAG_INT = "int"
@@ -16,6 +17,8 @@ ATTR_FRAMES = "frames"
 ATTR_FRAMERATE = "frameRate"
 ATTR_ADDITIVE = "additive"
 ATTR_SKELETON = "skeleton"
+ATTR_FRAME = "frame"
+ATTR_TEXT = "text"
 
 CURRENT_VERSION = "1"
 SUPPORTED_VERSIONS = {"1"}
@@ -53,16 +56,67 @@ class DOMInterface():
         self.doc = doc
         self.node = node
     
-    def add_element(self, objtype, tagname, attributes):
+    def add_element(self, tagname, attributes):
         e = self.doc.createElement(tagname)
         self.node.appendChild(e)
         
         for name, value in attributes.items():
             e.setAttribute(name, value)
         
-        return objtype(self.doc, e)
-        
+        return e
+    
+    def get_elements(self, tagName=""):
+        for node in self.node.childNodes:
+            if node.nodeType == node.ELEMENT_NODE and (tagName == "" or node.tagName == tagName):
+                yield node
 
+
+class AnnotationInterface(DOMInterface):
+    frame: int
+    text: str
+    
+    def __init__(self, doc, node):
+        super().__init__(doc, node)
+        
+        #find frame element
+        e = None
+        for child in self.get_elements(TAG_INT):
+            if child.getAttribute("name") == ATTR_FRAME:
+                e = child
+        
+        #create elements if missing
+        if not e:
+            e = self.add_element(TAG_INT, {"name" : ATTR_FRAME})
+            e.appendChild(self.doc.createTextNode("-1"))
+        
+        #start counting frames at 1
+        self.frame = int(e.firstChild.data) + 1
+        
+        #find text element
+        e = None
+        for child in self.get_elements(TAG_STRING):
+            if child.getAttribute("name") == ATTR_TEXT:
+                e = child
+        
+        #create if missing
+        if not e:
+            e = self.add_element(TAG_STRING, {"name" : ATTR_TEXT})
+            e.appendChild(self.doc.createTextNode(""))
+        
+        self.text = e.firstChild.data
+    
+    def set_frame(self, frame):
+        self.frame = frame
+        for child in self.get_elements(TAG_INT):
+            if child.getAttribute("name") == ATTR_FRAME:
+                #output frame number counting from 0
+                child.firstChild.data = str(frame - 1)
+    
+    def set_text(self, text):
+        self.text = text
+        for child in self.get_elements(TAG_STRING):
+            if child.getAttribute("name") == ATTR_TEXT:
+                child.firstChild.data = text
 
 class KeyInterface(DOMInterface):
     frame: int
@@ -115,13 +169,12 @@ class TrackInterface(DOMInterface):
         self.name = node.getAttribute("name")
     
     def add_key(self, index):
-        ikey = self.add_element(self.keytype, self.datatype.value, {"name" : str(index)})
-        return ikey
+        e = self.add_element(self.datatype.value, {"name" : str(index)})
+        return self.keytype(self.doc, e)
     
     def keys(self):
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == self.datatype.value:
-                yield self.keytype(self.doc, node)
+        for node in self.get_elements(tagName=self.datatype.value):
+            yield self.keytype(self.doc, node)
 
 
 class FloatTrackInterface(TrackInterface):
@@ -155,16 +208,25 @@ class AnimationInterface(DOMInterface):
         
         #find skeleton name
         self._skeleton = None
-        for child in node.childNodes:
-            if child.nodeType == child.ELEMENT_NODE and child.tagName == TAG_STRING and child.getAttribute("name") == ATTR_SKELETON:
+        for child in self.get_elements(tagName=TAG_STRING):
+            if child.getAttribute("name") == ATTR_SKELETON:
                 self._skeleton = child
                 break
     
+    def add_annotation(self, frame, text):
+        e = self.add_element(TAG_ANNOTATION, {})
+        ianno = AnnotationInterface(self.doc, e)
+        ianno.set_frame(frame)
+        ianno.set_text(text)
+        return ianno
+    
     def add_float_track(self, name):
-        return self.add_element(FloatTrackInterface, TAG_TRACK, {"name" : name, "type" : Track.FLOAT.value})
+        e = self.add_element(TAG_TRACK, {"name" : name, "type" : Track.FLOAT.value})
+        return FloatTrackInterface(self.doc, e)
     
     def add_transform_track(self, name):
-        return self.add_element(TransformTrackInterface, TAG_TRACK, {"name" : name, "type" : Track.TRANSFORM.value})
+        e = self.add_element(TAG_TRACK, {"name" : name, "type" : Track.TRANSFORM.value})
+        return TransformTrackInterface(self.doc, e)
     
     def set_skeleton_name(self, name):
         if self._skeleton:
@@ -179,14 +241,17 @@ class AnimationInterface(DOMInterface):
             e.appendChild(self.doc.createTextNode(name))
             self.node.appendChild(e)
     
+    def annotations(self):
+        for node in self.get_elements(tagName=TAG_ANNOTATION):
+            yield AnnotationInterface(self.doc, node)
+    
     def tracks(self):
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRACK:
-                datatype = node.getAttribute("type")
-                if datatype == Track.FLOAT.value:
-                    yield FloatTrackInterface(self.doc, node)
-                elif datatype == Track.TRANSFORM.value:
-                    yield TransformTrackInterface(self.doc, node)
+        for node in self.get_elements(tagName=TAG_TRACK):
+            datatype = node.getAttribute("type")
+            if datatype == Track.FLOAT.value:
+                yield FloatTrackInterface(self.doc, node)
+            elif datatype == Track.TRANSFORM.value:
+                yield TransformTrackInterface(self.doc, node)
 
 
 class SkeletonInterface(DOMInterface):
@@ -198,16 +263,14 @@ class SkeletonInterface(DOMInterface):
         self.name = node.getAttribute("name")
     
     def bones(self):
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_BONE:
-                yield SkeletonInterface(self.doc, node)
+        for node in self.get_elements(tagName=TAG_BONE):
+            yield SkeletonInterface(self.doc, node)
     
     def refpose(self):
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_TRANSFORM:
-                assert len(node.childNodes) == 1, "unexpected text"
-                assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
-                return unpacktransform(node.firstChild.data)
+        for node in self.get_elements(tagName=TAG_TRANSFORM):
+            assert len(node.childNodes) == 1, "unexpected text"
+            assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
+            return unpacktransform(node.firstChild.data)
         
         #Transform must not be missing
         raise RuntimeError("Bone missing reference pose")
@@ -224,14 +287,12 @@ class DocumentInterface(DOMInterface):
         assert self.node.getAttribute("version") in SUPPORTED_VERSIONS, "unsupported version"
         
         self.animations = []
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_ANIMATION:
-                self.animations.append(AnimationInterface(doc, node))
+        for node in self.get_elements(tagName=TAG_ANIMATION):
+            self.animations.append(AnimationInterface(doc, node))
                 
         self.skeletons = []
-        for node in self.node.childNodes:
-            if node.nodeType == node.ELEMENT_NODE and node.tagName == TAG_SKELETON:
-                self.skeletons.append(SkeletonInterface(doc, node))
+        for node in self.get_elements(tagName=TAG_SKELETON):
+            self.skeletons.append(SkeletonInterface(doc, node))
     
     def __del__(self):
         #probably not necessary
@@ -242,7 +303,8 @@ class DocumentInterface(DOMInterface):
             self.doc.writexml(file, addindent='\t', newl='\n', encoding="UTF-8")
     
     def add_animation(self, name):
-        ianim = self.add_element(AnimationInterface, TAG_ANIMATION, {"name" : name})
+        e = self.add_element(TAG_ANIMATION, {"name" : name})
+        ianim = AnimationInterface(self.doc, e)
         if ianim:
             self.animations.append(ianim)
         return ianim

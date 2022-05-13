@@ -3,28 +3,30 @@
 
 #define DATA_VERSION 1
 
-const char* NODE_FILE = "blender-hkx";
+constexpr const char* NODE_FILE = "blender-hkx";
 
-const char* NODE_SKELETON = "skeleton";
-const char* NODE_BONE = "bone";
+constexpr const char* NODE_SKELETON = "skeleton";
+constexpr const char* NODE_BONE = "bone";
 
-const char* NODE_ANIMATION = "animation";
-const char* NODE_TRACK = "track";
+constexpr const char* NODE_ANIMATION = "animation";
+constexpr const char* NODE_ANNOTATION = "annotation";
+constexpr const char* NODE_TRACK = "track";
 
-const char* TYPE_INT = "int";
-const char* TYPE_FLOAT = "float";
-const char* TYPE_STRING = "string";
-const char* TYPE_VEC3 = "vec3";
-const char* TYPE_VEC4 = "vec4";
-const char* TYPE_TRANSFORM = "transform";
+constexpr const char* TYPE_BOOL = "bool";
+constexpr const char* TYPE_INT = "int";
+constexpr const char* TYPE_FLOAT = "float";
+constexpr const char* TYPE_STRING = "string";
+constexpr const char* TYPE_VEC3 = "vec3";
+constexpr const char* TYPE_VEC4 = "vec4";
+constexpr const char* TYPE_TRANSFORM = "transform";
 
-const char* ATTR_FRAMES = "frames";
-const char* ATTR_FRAMERATE = "frameRate";
-const char* ATTR_ADDITIVE = "additive";
-const char* ATTR_SKELETON = "skeleton";
-const char* ATTR_REFPOSE = "refPose";
-const char* ATTR_FRAME = "frame";
-
+constexpr const char* ATTR_FRAMES = "frames";
+constexpr const char* ATTR_FRAMERATE = "frameRate";
+constexpr const char* ATTR_ADDITIVE = "additive";
+constexpr const char* ATTR_SKELETON = "skeleton";
+constexpr const char* ATTR_REFPOSE = "refPose";
+constexpr const char* ATTR_FRAME = "frame";
+constexpr const char* ATTR_TEXT = "text";
 
 using namespace iohkx;
 using namespace pugi;
@@ -45,6 +47,36 @@ static void strToVec(const char* str, float* vec)
 		assert(str != end);
 		str = end;
 	}
+}
+
+static bool readb(pugi::xml_node node, const char* name)
+{
+	for (xml_node n = node.child(TYPE_BOOL); n; n = n.next_sibling(TYPE_BOOL)) {
+		if (strcmp(n.attribute("name").value(), name) == 0) {
+			return _stricmp(n.child_value(), "true") == 0;
+		}
+	}
+	return false;
+}
+
+static int readi(pugi::xml_node node, const char* name)
+{
+	for (xml_node n = node.child(TYPE_INT); n; n = n.next_sibling(TYPE_INT)) {
+		if (strcmp(n.attribute("name").value(), name) == 0) {
+			return n.first_child().text().as_int(-1);
+		}
+	}
+	return -1;
+}
+
+static const char* reads(pugi::xml_node node, const char* name)
+{
+	for (xml_node n = node.child(TYPE_STRING); n; n = n.next_sibling(TYPE_STRING)) {
+		if (strcmp(n.attribute("name").value(), name) == 0) {
+			return n.child_value();
+		}
+	}
+	return "";
 }
 
 static void readFloatTrack(pugi::xml_node node, iohkx::AnimationData& data)
@@ -111,25 +143,38 @@ static void readAnimation(
 	//We don't have any real policy for skeleton names. 
 	//Just do: first clip->first skeleton, second clip->last skeleton
 	data.clips.push_back(Clip());
-	data.clips.back().skeleton = data.clips.size() == 1 ? skeletons.front() : skeletons.back();
+	Clip& clip = data.clips.back();
+	clip.skeleton = data.clips.size() == 1 ? skeletons.front() : skeletons.back();
 
 	//Reserve memory for tracks
-	data.clips.back().rootTransform = new BoneTrack;
-	data.clips.back().boneTracks = new BoneTrack[data.clips.front().skeleton->nBones];
-	data.clips.back().floatTracks = new FloatTrack[data.clips.front().skeleton->nFloats];
-	data.clips.back().boneMap.resize(data.clips.front().skeleton->nBones, nullptr);
-	data.clips.back().floatMap.resize(data.clips.front().skeleton->nFloats, nullptr);
+	clip.rootTransform = new BoneTrack;
+	clip.boneTracks = new BoneTrack[clip.skeleton->nBones];
+	clip.floatTracks = new FloatTrack[clip.skeleton->nFloats];
+	clip.boneMap.resize(clip.skeleton->nBones, nullptr);
+	clip.floatMap.resize(clip.skeleton->nFloats, nullptr);
 
-	//for each track
-	for (xml_node track = node.child(NODE_TRACK); track; track = track.next_sibling(NODE_TRACK)) {
-		xml_attribute type = track.attribute("type");
+	//read tracks
+	for (xml_node t = node.child(NODE_TRACK); t; t = t.next_sibling(NODE_TRACK)) {
+		xml_attribute type = t.attribute("type");
 		if (strcmp(type.value(), TYPE_TRANSFORM) == 0) {
-			readTransformTrack(track, data);
+			readTransformTrack(t, data);
 		}
 		else if (strcmp(type.value(), TYPE_FLOAT) == 0) {
-			readFloatTrack(track, data);
+			readFloatTrack(t, data);
 		}
 	}
+
+	//read annotations
+	for (xml_node a = node.child(NODE_ANNOTATION); a; a = a.next_sibling(NODE_ANNOTATION)) {
+		clip.annotations.push_back({ readi(a, ATTR_FRAME), reads(a, ATTR_TEXT) });
+	}
+}
+
+static void appendb(pugi::xml_node node, const char* name, bool val)
+{
+	xml_node child = node.append_child(TYPE_BOOL);
+	child.append_attribute("name").set_value(name);
+	child.append_child(node_pcdata).set_value(val ? "true" : "false");
 }
 
 static void appendf(pugi::xml_node node, const char* name, float val)
@@ -155,6 +200,13 @@ static void appends(pugi::xml_node node, const char* name, const char* val)
 	xml_node child = node.append_child(TYPE_STRING);
 	child.append_attribute("name").set_value(name);
 	child.append_child(node_pcdata).set_value(val);
+}
+
+static void appendAnnotation(pugi::xml_node node, const Annotation& annotation)
+{
+	xml_node child = node.append_child(NODE_ANNOTATION);
+	appendi(child, ATTR_FRAME, annotation.frame);
+	appends(child, ATTR_TEXT, annotation.text.c_str());
 }
 
 static void appendTransform(pugi::xml_node node, const char* name, const hkQsTransform& val)
@@ -219,21 +271,9 @@ void iohkx::XMLInterface::read(
 	xml_node root = doc.child(NODE_FILE);
 	if (root) {
 		if (root.attribute("version").as_int(-1) == 1) {
-			for (xml_node node = root.child(TYPE_INT); node; node = node.next_sibling(TYPE_INT)) {
-				xml_attribute name = node.attribute("name");
-				if (strcmp(name.value(), ATTR_FRAMES) == 0) {
-					data.frames = node.first_child().text().as_int(-1);
-				}
-				else if (strcmp(name.value(), ATTR_FRAMERATE) == 0) {
-					data.frameRate = node.first_child().text().as_int(-1);
-				}
-			}
-			for (xml_node node = root.child(TYPE_STRING); node; node = node.next_sibling(TYPE_STRING)) {
-				if (strcmp(node.attribute("name").value(), ATTR_ADDITIVE) == 0) {
-					data.additive = _stricmp(node.child_value(), "true") == 0;
-					break;
-				}
-			}
+			data.frames = readi(root, ATTR_FRAMES);
+			data.frameRate = readi(root, ATTR_FRAMERATE);
+			data.additive = readb(root, ATTR_ADDITIVE);
 
 			if (data.frames < 0)
 				throw Exception(ERR_INVALID_INPUT, "Missing frames value");
@@ -268,7 +308,7 @@ void iohkx::XMLInterface::write(
 	//Add shared attributes
 	appendi(root, ATTR_FRAMES, data.frames);
 	appendi(root, ATTR_FRAMERATE, data.frameRate);
-	appends(root, ATTR_ADDITIVE, data.additive ? "true" : "false");
+	appendb(root, ATTR_ADDITIVE, data.additive);
 
 	//Add skeleton elements
 	std::vector<const Skeleton*> addedSkeletons;
@@ -332,6 +372,11 @@ void iohkx::XMLInterface::write(
 				sprintf_s(buf, sizeof(buf), "%d", f);
 				appendf(node, buf, track->keys[f]);
 			}
+		}
+
+		//Annotations
+		for (auto&& anno : clip.annotations) {
+			appendAnnotation(anim, anno);
 		}
 	}
 

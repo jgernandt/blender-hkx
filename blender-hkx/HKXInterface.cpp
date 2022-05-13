@@ -20,36 +20,41 @@ const char* FORMAT[] = {
 
 iohkx::HKXInterface::HKXInterface()
 {
-	m_options.textFormat = false;
-	m_options.layout = LAYOUT_AMD64;
 }
 
 hkRefPtr<hkaAnimationContainer> iohkx::HKXInterface::load(const char* fileName)
 {
+	hkRefPtr<hkaAnimationContainer> result;
+
 	hkSerializeUtil::ErrorDetails err;
 	hkIstream file(fileName);
 	hkStreamReader* sr = file.getStreamReader();
 
 #ifdef _DEBUG
 	std::cout << "Loading " << fileName << "...\n";
+#endif
 	if (hkSerializeUtil::isLoadable(sr)) {
+
+#ifdef _DEBUG
 		hkSerializeUtil::FormatDetails format;
 		hkSerializeUtil::detectFormat(sr, format);
 		std::cout << "    Format: " << FORMAT[format.m_formatType] << '\n';
 		std::cout << "    Version: " << format.m_version << '\n';
-	}
-	else
-		std::cout << "File not loadable\n";
 #endif
 
-	hkRootLevelContainer* root = hkSerializeUtil::loadObject<hkRootLevelContainer>(sr, &err);
-	if (err.id != hkSerializeUtil::ErrorDetails::ERRORID_NONE)
-		throw Exception(ERR_READ_FAIL, err.defaultMessage);
+		hkRootLevelContainer* root = hkSerializeUtil::loadObject<hkRootLevelContainer>(sr, &err);
+		if (err.id != hkSerializeUtil::ErrorDetails::ERRORID_NONE)
+			throw Exception(ERR_READ_FAIL, err.defaultMessage);
 
-	hkRefPtr<hkaAnimationContainer> anim = root->findObject<hkaAnimationContainer>();
-	delete root;
+		result = root->findObject<hkaAnimationContainer>();
+		delete root;
+	}
+#ifdef _DEBUG
+	else
+		std::cout << "    File not loadable\n";
+#endif
 
-	return anim;
+	return result;
 }
 
 void iohkx::HKXInterface::save(hkaAnimationContainer* animCtnr, const char* fileName)

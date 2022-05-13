@@ -168,6 +168,24 @@ static std::pair<int, Bone*> findBone(const char* name, const std::vector<Clip>&
 	return { -1, nullptr };
 }
 
+struct iohkx::AnimationDecoder::CompressionMap
+{
+	//bones[i], floats[i] will be the data for output track i
+	// (the pair is so that we can find the bone (to fill with ref pose)
+	//  if there is no track for it)
+	std::vector<std::pair<BoneTrack*, Bone*>> bones;
+	std::vector<FloatTrack*> floats;
+	int annotationTracks[2]{ -1, -1 };
+};
+
+struct iohkx::AnimationDecoder::DecompressionMap
+{
+	std::vector<BoneTrack*> bones;
+	std::vector<FloatTrack*> floats;
+	int annotationClip{ -1 };
+	int annotationTrack{ -1 };
+};
+
 iohkx::AnimationDecoder::AnimationDecoder()
 {}
 
@@ -180,8 +198,7 @@ iohkx::AnimationDecoder::~AnimationDecoder()
 	}
 }
 
-hkRefPtr<hkaAnimationContainer>
-iohkx::AnimationDecoder::compress()
+hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 {
 	if (m_data.frames < 1 || m_data.clips.empty())
 		//Nothing to compress
@@ -214,20 +231,18 @@ iohkx::AnimationDecoder::compress()
 		new hkaInterleavedUncompressedAnimation;
 	raw->removeReference();
 
-	//bones[i], floats[i] will be the data for output track i
-	// (the pair is so that we can find the bone (to fill with ref pose)
-	//  if there is no track for it)
-	std::vector<std::pair<BoneTrack*, Bone*>> bones;
-	std::vector<FloatTrack*> floats;
+	//Map the source data to the hkaAnimation in a way that works for both 
+	//single and paired animations
+	CompressionMap map;
 	if (m_data.clips.size() == 2) {
-		mapPairedComp(binding, raw, bones, floats);
+		mapPairedComp(binding, raw, map);
 	}
 	else if (m_data.clips.size() == 1) {
-		mapSingleComp(binding, raw, bones, floats);
+		mapSingleComp(binding, raw, map);
 	}
 
-	int nBones = bones.size();
-	int nFloats = floats.size();
+	int nBones = map.bones.size();
+	int nFloats = map.floats.size();
 
 	if (nBones == 0 && nFloats == 0)
 		//Nothing to export
@@ -241,7 +256,7 @@ iohkx::AnimationDecoder::compress()
 
 	//Transfer data to raw anim
 	for (int i = 0; i < nBones; i++) {
-		BoneTrack* track = bones[i].first;
+		BoneTrack* track = map.bones[i].first;
 		if (track) {
 			//Use current key, or last if none
 
@@ -258,8 +273,8 @@ iohkx::AnimationDecoder::compress()
 			//fill with ref pose (or identity if we have no bone)
 
 			for (int f = 0; f < m_data.frames; f++) {
-				if (bones[i].second) {
-					raw->m_transforms[i + f * nBones] = bones[i].second->refPose;
+				if (map.bones[i].second) {
+					raw->m_transforms[i + f * nBones] = map.bones[i].second->refPose;
 				}
 				else {
 					raw->m_transforms[i + f * nBones].setIdentity();
@@ -269,7 +284,7 @@ iohkx::AnimationDecoder::compress()
 		//else ignore
 	}
 	for (int i = 0; i < nFloats; i++) {
-		FloatTrack* track = floats[i];
+		FloatTrack* track = map.floats[i];
 		if (track) {
 			//Use current key, or last if none
 
@@ -284,6 +299,16 @@ iohkx::AnimationDecoder::compress()
 		}
 		//else ignore (never fill)
 	}
+	for (int i : { 0, 1 }) {
+		if (map.annotationTracks[i] != -1) {
+			for (auto&& anno : m_data.clips[i].annotations) {
+				hkaAnnotationTrack::Annotation a;
+				a.m_time = static_cast<float>(anno.frame) / FRAME_RATE;
+				a.m_text = anno.text.c_str();
+				raw->m_annotationTracks[map.annotationTracks[i]].m_annotations.pushBack(a);
+			}
+		}
+	}
 
 	hkaSkeletonUtils::normalizeRotations(raw->m_transforms.begin(), raw->m_transforms.getSize());
 
@@ -293,15 +318,15 @@ iohkx::AnimationDecoder::compress()
 		acp.m_enableSampleSingleTracks = true;
 
 	hkaSplineCompressedAnimation::TrackCompressionParams tcp;
-	tcp.m_translationTolerance = 0.001f;
-	tcp.m_rotationTolerance = 0.0001f;
-	tcp.m_scaleTolerance = 0.001f;
-	tcp.m_floatingTolerance = 0.001f;
+	tcp.m_translationTolerance = 0.004f;
+	tcp.m_rotationTolerance = 0.001f;
+	tcp.m_scaleTolerance = 0.004f;
+	tcp.m_floatingTolerance = 0.004f;
 
-	//tcp.m_translationQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
+	tcp.m_translationQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
 	tcp.m_rotationQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::THREECOMP40;
-	//tcp.m_scaleQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
-	//tcp.m_floatQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
+	tcp.m_scaleQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
+	tcp.m_floatQuantizationType = hkaSplineCompressedAnimation::TrackCompressionParams::BITS8;
 
 	assert(tcp.isOk());
 
@@ -331,17 +356,16 @@ void iohkx::AnimationDecoder::decompress(
 	hkaAnimation* anim = animCtnr->m_animations[0];
 	hkaAnimationBinding* binding = animCtnr->m_bindings[0];
 
-	//To make this work with paired animations:
-	//Very generally, we need a mapping of animation track index to a Bone* or Float*.
-	//Even better, a mapping from track index to a BoneTrack* or FloatTrack*.
-	std::vector<BoneTrack*> bones(anim->m_numberOfTransformTracks, nullptr);
-	std::vector<FloatTrack*> floats(anim->m_numberOfFloatTracks, nullptr);
-	//This mapping will be done very differently depending on whether 
-	//binding->m_originalSkeletonName is "PairedRoot" or not.
+	//Map the source data to our AnimationData in a way that works for both 
+	//single and paired animations
+	DecompressionMap map;
+	map.bones.resize(anim->m_numberOfTransformTracks, nullptr);
+	map.floats.resize(anim->m_numberOfFloatTracks, nullptr);
+
 	if (binding->m_originalSkeletonName == "PairedRoot")
-		mapPaired(binding, skeletons, bones, floats);
+		mapPaired(binding, skeletons, map);
 	else
-		mapSingle(binding, skeletons, bones, floats);
+		mapSingle(binding, skeletons, map);
 
 	//Abort if the animation could not be mapped
 	if (m_data.clips.empty())
@@ -354,12 +378,12 @@ void iohkx::AnimationDecoder::decompress(
 
 	//Init the key arrays
 	for (int i = 0; i < anim->m_numberOfTransformTracks; i++) {
-		if (bones[i])
-			bones[i]->keys.setSize(m_data.frames);
+		if (map.bones[i])
+			map.bones[i]->keys.setSize(m_data.frames);
 	}
 	for (int i = 0; i < anim->m_numberOfFloatTracks; i++) {
-		if (floats[i])
-			floats[i]->keys.setSize(m_data.frames);
+		if (map.floats[i])
+			map.floats[i]->keys.setSize(m_data.frames);
 	}
 
 	//Sample animation and transfer keys
@@ -371,11 +395,11 @@ void iohkx::AnimationDecoder::decompress(
 		for (int i = 0; i < tmpT.getSize(); i++) {
 			//convert to bone-space,
 			//=inverse of parent-space ref pose * sample pose
-			if (bones[i]) {
-				assert(bones[i]->target);
+			if (map.bones[i]) {
+				assert(map.bones[i]->target);
 
 				hkQsTransform inv;
-				inv.setInverse(bones[i]->target->refPose);
+				inv.setInverse(map.bones[i]->target->refPose);
 				tmpT[i].setMul(inv, tmpT[i]);
 			}
 		}
@@ -383,43 +407,23 @@ void iohkx::AnimationDecoder::decompress(
 		hkaSkeletonUtils::normalizeRotations(tmpT.begin(), tmpT.getSize());
 
 		for (int i = 0; i < anim->m_numberOfTransformTracks; i++) {
-			if (bones[i])
-				bones[i]->keys[f] = tmpT[i];
+			if (map.bones[i])
+				map.bones[i]->keys[f] = tmpT[i];
 		}
 		for (int i = 0; i < anim->m_numberOfFloatTracks; i++) {
-			if (floats[i])
-				floats[i]->keys[f] = tmpF[i];
+			if (map.floats[i])
+				map.floats[i]->keys[f] = tmpF[i];
 		}
 	}
 
-	//Postprocess: if *every* key in a track is identical, we only need one.
-	//Worth the trouble? This is not a performance-dependent application.
-	for (int t = 0; t < anim->m_numberOfTransformTracks; t++) {
+	removeDuplicateKeys();
 
-		if (bones[t]) {
-			bool clean = true;
-			for (int f = 1; f < m_data.frames; f++) {
-				if (!bones[t]->keys[f].isApproximatelyEqual(bones[t]->keys[f - 1], 0.0f)) {
-					clean = false;
-					break;
-				}
-			}
-			if (clean)
-				bones[t]->keys.setSize(1);
-		}
-	}
-	for (int t = 0; t < anim->m_numberOfFloatTracks; t++) {
-
-		if (floats[t]) {
-			bool clean = true;
-			for (int f = 1; f < m_data.frames; f++) {
-				if (floats[t]->keys[f] != floats[t]->keys[f - 1]) {
-					clean = false;
-					break;
-				}
-			}
-			if (clean)
-				floats[t]->keys.setSize(1);
+	//Annotations
+	if (map.annotationClip != -1 && map.annotationTrack != -1) {
+		for (auto&& item : anim->m_annotationTracks[map.annotationTrack].m_annotations) {
+			m_data.clips[map.annotationClip].annotations.push_back({ 
+				static_cast<int>(std::round(item.m_time * FRAME_RATE)),
+				item.m_text.cString() });
 		}
 	}
 }
@@ -427,13 +431,12 @@ void iohkx::AnimationDecoder::decompress(
 void iohkx::AnimationDecoder::mapPairedComp(
 	hkaAnimationBinding* binding,
 	hkaAnimation* animation,
-	std::vector<std::pair<BoneTrack*, Bone*>>& bones,
-	std::vector<FloatTrack*>& floats)
+	CompressionMap& map)
 {
 	assert(binding && m_data.clips.size() == 2);
 
-	bones.clear();
-	floats.clear();
+	map.bones.clear();
+	map.floats.clear();
 
 	if (m_data.additive)
 		//I've never seen this in paired, don't know how to deal with it
@@ -454,28 +457,30 @@ void iohkx::AnimationDecoder::mapPairedComp(
 	int nFloats = 0;
 
 	//Fill out the targets and annotation names
-	bones.resize(nBones);
+	map.bones.resize(nBones);
 	animation->m_annotationTracks.setSize(nBones);
 	auto&& annotations = animation->m_annotationTracks;
 
 	//PairedRoot (has neither track nor bone)
-	bones[0].first = nullptr;
-	bones[0].second = nullptr;
+	map.bones[0].first = nullptr;
+	map.bones[0].second = nullptr;
 	annotations[0].m_trackName = "PairedRoot";
 
 	//I don't know if the order here matters. Let's assume not.
 
 	//Primary actor
 	// root
-	bones[1].first = primary.rootTransform;
-	bones[1].second = primary.skeleton->rootBone;
+	map.bones[1].first = primary.rootTransform;
+	map.bones[1].second = primary.skeleton->rootBone;
 	annotations[1].m_trackName = ROOT_BONE;
 	int current = 2;
+	//annotations go to bone 0
+	map.annotationTracks[0] = current;
 	// bones
 	for (int i = 0; i < primary.skeleton->nBones; i++) {
-		bones[current].first = primary.boneMap[i];
-		bones[current].second = &primary.skeleton->bones[i];
-		annotations[current].m_trackName = bones[current].second->name.c_str();
+		map.bones[current].first = primary.boneMap[i];
+		map.bones[current].second = &primary.skeleton->bones[i];
+		annotations[current].m_trackName = map.bones[current].second->name.c_str();
 		++current;
 	}
 	// addenda
@@ -488,15 +493,17 @@ void iohkx::AnimationDecoder::mapPairedComp(
 
 	//Secondary actor
 	// root
-	bones[current].first = secondary.rootTransform;
-	bones[current].second = secondary.skeleton->rootBone;
+	map.bones[current].first = secondary.rootTransform;
+	map.bones[current].second = secondary.skeleton->rootBone;
 	setSecondaryRootName(secondary.skeleton->rootBone->name,
 		secondary.skeleton, annotations[current]);
 	++current;
+	//annotations go to bone 0
+	map.annotationTracks[1] = current;
 	// bones
 	for (int i = 0; i < secondary.skeleton->nBones; i++) {
-		bones[current].first = secondary.boneMap[i];
-		bones[current].second = &secondary.skeleton->bones[i];
+		map.bones[current].first = secondary.boneMap[i];
+		map.bones[current].second = &secondary.skeleton->bones[i];
 		setSecondaryName(secondary.skeleton->bones[i].name, 
 			secondary.skeleton, annotations[current]);
 		++current;
@@ -515,12 +522,13 @@ void iohkx::AnimationDecoder::mapPairedComp(
 void iohkx::AnimationDecoder::mapSingleComp(
 	hkaAnimationBinding* binding,
 	hkaAnimation* animation,
-	std::vector<std::pair<BoneTrack*, Bone*>>& bones,
-	std::vector<FloatTrack*>& floats)
+	CompressionMap& map)
 {
 	assert(binding && !m_data.clips.empty());
 
 	Clip& clip = m_data.clips.front();
+
+	//Find the final track that represents bone 0!
 
 	binding->m_originalSkeletonName = clip.skeleton->name.c_str();
 
@@ -563,21 +571,23 @@ void iohkx::AnimationDecoder::mapSingleComp(
 		assert(binding->m_floatTrackToFloatSlotIndices.getSize() == nFloats);
 	}
 
-	bones.resize(nBones, { nullptr, nullptr });
-	floats.resize(nFloats, nullptr);
+	map.bones.resize(nBones, { nullptr, nullptr });
+	map.floats.resize(nFloats, nullptr);
 
 	//Fill out bones and floats in whatever order we want it in the final animation,
 	//i.e. in skeleton order
 	
-	//only correct if nBones == skeleton->nBones! Fix later.
+	//---only correct if nBones == skeleton->nBones! Fix later.
 	assert(nBones == clip.skeleton->nBones);
+	map.annotationTracks[0] = 0;
 	for (int i = 0; i < nBones; i++) {
-		bones[i].first = clip.boneMap[i];//may be null
-		bones[i].second = &clip.skeleton->bones[i];
+		map.bones[i].first = clip.boneMap[i];//may be null
+		map.bones[i].second = &clip.skeleton->bones[i];
 	}
 	for (int i = 0; i < nFloats; i++) {
-		floats[i] = clip.floatMap[i];//may be null
+		map.floats[i] = clip.floatMap[i];//may be null
 	}
+	//---
 
 	//Initialise annotation tracks
 	animation->m_annotationTracks.setSize(nBones);
@@ -589,8 +599,7 @@ void iohkx::AnimationDecoder::mapSingleComp(
 void iohkx::AnimationDecoder::mapPaired(
 	hkaAnimationBinding* binding,
 	const std::vector<Skeleton*>& skeletons,
-	std::vector<BoneTrack*>& bones,
-	std::vector<FloatTrack*>& floats)
+	DecompressionMap& map)
 {
 	assert(binding);
 
@@ -629,7 +638,7 @@ void iohkx::AnimationDecoder::mapPaired(
 
 	std::pair<int, Bone*> roots[2]{ { -1, nullptr }, { -1, nullptr } };
 
-	std::vector<std::pair<int, Bone*>> addenda[2];
+	//std::vector<std::pair<int, Bone*>> addenda[2];
 
 	for (int i = 0; i < animation->m_numberOfTransformTracks; i++) {
 		//get (clip index, bone) by name
@@ -646,10 +655,17 @@ void iohkx::AnimationDecoder::mapPaired(
 					assert(!clip.rootTransform);
 					clip.rootTransform = new BoneTrack;
 					clip.rootTransform->target = clip.skeleton->rootBone;
-					bones[i] = clip.rootTransform;
+					map.bones[i] = clip.rootTransform;
 				}
-				else
+				else {
 					maps[pair.first].push_back({ i, pair.second });
+
+					//the annotations are in bone 0 of the primary skeleton (?)
+					if (pair.second == &m_data.clips[0].skeleton->bones[0]) {
+						map.annotationClip = 0;
+						map.annotationTrack = i;
+					}
+				}
 			}
 			else {
 				//This has been assigned to one of the clips, but it has no bone.
@@ -697,7 +713,7 @@ void iohkx::AnimationDecoder::mapPaired(
 			m_data.clips[i].boneMap[track->target->index] = track;
 
 			//Final mapping
-			bones[maps[i][j].first] = track;
+			map.bones[maps[i][j].first] = track;
 		}
 	}
 }
@@ -705,8 +721,7 @@ void iohkx::AnimationDecoder::mapPaired(
 void iohkx::AnimationDecoder::mapSingle(
 	hkaAnimationBinding* binding,
 	const std::vector<Skeleton*>& skeletons,
-	std::vector<BoneTrack*>& bones,
-	std::vector<FloatTrack*>& floats)
+	DecompressionMap& map)
 {
 	assert(binding);
 
@@ -716,58 +731,108 @@ void iohkx::AnimationDecoder::mapSingle(
 	//If it has *more* slots, it might still be correct.
 	if (skeletons.empty()
 		|| skeletons[0] == nullptr
-		|| skeletons[0]->nBones < (int)bones.size()
-		|| skeletons[0]->nFloats < (int)floats.size())
+		|| skeletons[0]->nBones < (int)map.bones.size()
+		|| skeletons[0]->nFloats < (int)map.floats.size())
 		return;
 
 	//There will be only one clip
 	m_data.clips.resize(1);
 	Clip& clip = m_data.clips.front();
+	map.annotationClip = 0;
 
 	//Point it to its skeleton
 	clip.skeleton = skeletons[0];
 
-	//Allocate the tracks (also 1:1 for a single-skeleton animation)
-	clip.nBoneTracks = bones.size();
+	//Allocate the tracks
+	clip.nBoneTracks = map.bones.size();
 	clip.boneTracks = new BoneTrack[clip.nBoneTracks];
+	//we don't need this map here
+	//clip.boneMap.resize(clip.skeleton->nBones, nullptr);
 
-	clip.nFloatTracks = floats.size();
+	clip.nFloatTracks = map.floats.size();
 	clip.floatTracks = new FloatTrack[clip.nFloatTracks];
+	//clip.floatMap.resize(clip.skeleton->nFloats, nullptr);
 
 	//Assign the track targets
 	if (binding->m_transformTrackToBoneIndices.isEmpty()) {
 		//The tracks should map 1:1 with the skeleton
 		for (int i = 0; i < clip.nBoneTracks; i++) {
 			clip.boneTracks[i].target = &skeletons[0]->bones[i];
+			//clip.boneMap[i] = &clip.boneTracks[i];
 		}
+		//The annotations should be in track 0
+		map.annotationTrack = 0;
 	}
 	else {
 		//Map from the binding
 		for (int i = 0; i < clip.nBoneTracks; i++) {
 			int index = binding->m_transformTrackToBoneIndices[i];
-			clip.boneTracks[i].target = &skeletons[0]->bones[index];
+			Bone* bone = &skeletons[0]->bones[index];
+			clip.boneTracks[i].target = bone;
+			//clip.boneMap[bone->index] = &clip.boneTracks[i];
+
+			//if we run into bone 0, we know where the annotations are
+			if (bone->index == 0) {
+				map.annotationTrack = i;
+			}
 		}
 	}
 	if (binding->m_floatTrackToFloatSlotIndices.isEmpty()) {
 		//The tracks should map 1:1 with the skeleton
 		for (int i = 0; i < clip.nFloatTracks; i++) {
 			clip.floatTracks[i].target = &skeletons[0]->floats[i];
+			//clip.floatMap[i] = &clip.floatTracks[i];
 		}
 	}
 	else {
 		//Map from the binding
 		for (int i = 0; i < clip.nFloatTracks; i++) {
 			int index = binding->m_floatTrackToFloatSlotIndices[i];
+			Float* flt = &skeletons[0]->floats[index];
 			clip.floatTracks[i].target = &skeletons[0]->floats[index];
+			//clip.floatMap[flt->index] = &clip.floatTracks[i];
 		}
 	}
 
 	//Do the final mapping (in this case just a copy of the track list)
 	for (int i = 0; i < clip.nBoneTracks; i++) {
-		bones[i] = &clip.boneTracks[i];
+		map.bones[i] = &clip.boneTracks[i];
 	}
 	for (int i = 0; i < clip.nFloatTracks; i++) {
-		floats[i] = &clip.floatTracks[i];
+		map.floats[i] = &clip.floatTracks[i];
+	}
+}
+
+void iohkx::AnimationDecoder::removeDuplicateKeys()
+{
+	//If all keys are equal, keep only one
+	for (auto&& clip : m_data.clips) {
+		//bones
+		for (int i = 0; i < clip.nBoneTracks; i++) {
+			auto&& keys = clip.boneTracks[i].keys;
+			bool clean = true;
+			for (int f = 1; f < m_data.frames; f++) {
+				if (!keys[f].isApproximatelyEqual(keys[f - 1], 0.0f)) {
+					clean = false;
+					break;
+				}
+			}
+			if (clean)
+				keys.setSize(1);
+		}
+		//floats
+		for (int i = 0; i < clip.nFloatTracks; i++) {
+			auto&& keys = clip.floatTracks[i].keys;
+			bool clean = true;
+			for (int f = 1; f < m_data.frames; f++) {
+				if (keys[f] != keys[f - 1]) {
+					clean = false;
+					break;
+				}
+			}
+			if (clean)
+				keys.setSize(1);
+		}
 	}
 }
 

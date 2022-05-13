@@ -15,8 +15,8 @@ namespace iohkx
 	public:
 		struct
 		{
-			bool textFormat;//{ false }
-			FileLayout layout;//{ LAYOUT_AMD64 }
+			bool textFormat{ false };
+			FileLayout layout{ LAYOUT_AMD64 };
 		} m_options;
 	};
 }

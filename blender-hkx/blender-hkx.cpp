@@ -8,9 +8,24 @@
 
 using namespace iohkx;
 
+constexpr const char* VERSION_STR = "0.1.0";
+
 void about()
 {
-	//TODO
+	std::cout << '\n';
+	std::cout << "Blender-HKX version " << VERSION_STR << '\n';
+	std::cout << "Copyright 2022 Jonas Gernandt.\n\n";
+
+	std::cout << "Blender-HKX is a tool for converting Havok animation files to a readable format.\n\
+It is part of a Blender addon and is only intended for use with Blender.\n\n";
+
+	std::cout << "Blender-HKX contains proprietary subprograms and may not be redistributed.\n\n";
+
+	std::cout << "Blender-HKX uses Havok (https://www.havok.com). \n\
+Havok software is Copyright 2020 Microsoft. All rights reserved.\n\n";
+
+	std::cout << "Blender-HKX uses pugixml (https://pugixml.org).\n\
+pugixml is Copyright 2006-2019 Arseny Kapoulkine.\n";
 }
 
 void unpack(int argc, char* const* argv)

@@ -217,7 +217,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             for arma, acti in zip(armatures, actions):
                 arma.animation_data.action = acti
             
-            
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
@@ -300,6 +299,12 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
                 self.importtransform(track, action)
             elif track.datatype == Track.FLOAT:
                 self.importfloat(track, action)
+        
+        #import markers
+        for annotation in ianim.annotations():
+            print("Marker %s at %s" % (annotation.text, str(annotation.frame)))
+            marker = action.pose_markers.new(annotation.text)
+            marker.frame = annotation.frame
         
         return action
     
@@ -511,7 +516,10 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                     fmt = "WIN32"
                 else:
                     fmt = "AMD64"
-                    
+                
+                #debug
+                fmt = "XML"
+                
                 args = '"%s" pack %s "%s" "%s" %s' % (tool, fmt, tmp_file, self.filepath, skels)
                 
                 print(args)
@@ -588,6 +596,14 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         
         #restore state
         context.scene.frame_set(current_frame)
+        
+        #Add annotations from pose markers
+        if armature.animation_data.action:
+            for marker in armature.animation_data.action.pose_markers:
+                if marker.frame >= self.frame_interval[0] and marker.frame <= self.frame_interval[1]:
+                    #count from frame_interval[0]
+                    i = marker.frame - self.frame_interval[0] + 1
+                    ianim.add_annotation(i, marker.name)
 
 
 def _tmpfilename(file_name, preferences):

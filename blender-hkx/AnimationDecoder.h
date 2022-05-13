@@ -4,6 +4,7 @@
 
 namespace iohkx
 {
+
 	class AnimationDecoder
 	{
 	public:
@@ -18,28 +19,28 @@ namespace iohkx
 		const AnimationData& get() const { return m_data; }
 
 	private:
+		struct CompressionMap;
+		struct DecompressionMap;
+
 		void annotate(hkaAnimation* animation);
 		void mapPairedComp(
 			hkaAnimationBinding* binding,
 			hkaAnimation* animation,
-			std::vector<std::pair<BoneTrack*, Bone*>>& bones,
-			std::vector<FloatTrack*>& floats);
+			CompressionMap& map);
 		void mapSingleComp(
 			hkaAnimationBinding* binding,
 			hkaAnimation* animation,
-			std::vector<std::pair<BoneTrack*, Bone*>>& bones,
-			std::vector<FloatTrack*>& floats);
+			CompressionMap& map);
 		void mapPaired(
 			hkaAnimationBinding* binding,
 			const std::vector<Skeleton*>& skeletons,
-			std::vector<BoneTrack*>& bones,
-			std::vector<FloatTrack*>& floats);
+			DecompressionMap& map);
 		void mapSingle(
 			hkaAnimationBinding* binding, 
 			const std::vector<Skeleton*>& skeletons, 
-			std::vector<BoneTrack*>& bones, 
-			std::vector<FloatTrack*>& floats);
+			DecompressionMap& map);
 
+		void removeDuplicateKeys();
 		void preProcess();
 
 	private:

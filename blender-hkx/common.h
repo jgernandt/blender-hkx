@@ -79,6 +79,12 @@ namespace iohkx
 		hkArray<hkReal> keys;
 	};
 
+	struct Annotation
+	{
+		int frame{ 0 };
+		std::string text;
+	};
+
 	//A way of adding bones to the skeleton,
 	// but I don't think that's a good idea.
 	//struct Addendum
@@ -104,6 +110,10 @@ namespace iohkx
 		std::vector<FloatTrack*> floatMap;
 
 		//std::vector<Addendum> addenda;
+
+		//I've only ever seen annotation keys on the root bone 
+		//(NPC Root [Root]) of the primary actor.
+		std::vector<Annotation> annotations;
 	};
 
 	struct AnimationData
