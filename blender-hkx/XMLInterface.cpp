@@ -7,6 +7,7 @@ constexpr const char* NODE_FILE = "blender-hkx";
 
 constexpr const char* NODE_SKELETON = "skeleton";
 constexpr const char* NODE_BONE = "bone";
+constexpr const char* NODE_FLOATSLOT = "slot";
 
 constexpr const char* NODE_ANIMATION = "animation";
 constexpr const char* NODE_ANNOTATION = "annotation";
@@ -24,7 +25,7 @@ constexpr const char* ATTR_FRAMES = "frames";
 constexpr const char* ATTR_FRAMERATE = "frameRate";
 constexpr const char* ATTR_ADDITIVE = "additive";
 constexpr const char* ATTR_SKELETON = "skeleton";
-constexpr const char* ATTR_REFPOSE = "refPose";
+constexpr const char* ATTR_REFERENCE = "ref";
 constexpr const char* ATTR_FRAME = "frame";
 constexpr const char* ATTR_TEXT = "text";
 
@@ -81,6 +82,30 @@ static const char* reads(pugi::xml_node node, const char* name)
 
 static void readFloatTrack(pugi::xml_node node, iohkx::AnimationData& data)
 {
+	Clip& clip = data.clips.back();
+
+	assert(clip.skeleton);
+
+	FloatTrack* track = nullptr;
+
+	//look for this float in the skeleton
+	auto it = clip.skeleton->floatIndex.find(node.attribute("name").value());
+	if (it != clip.skeleton->floatIndex.end()) {
+		track = &clip.floatTracks[clip.nFloatTracks];
+		track->target = it->second;
+		clip.floatMap[it->second->index] = track;
+
+		clip.nFloatTracks++;
+	}
+	//else ignore
+
+	if (track) {
+		//Add keys
+		track->keys.reserve(data.frames);
+		for (xml_node key = node.child(TYPE_FLOAT); key; key = key.next_sibling(TYPE_FLOAT)) {
+			track->keys.pushBack(key.first_child().text().as_float(track->target->refValue));
+		}
+	}
 }
 
 static void readTransformTrack(pugi::xml_node node, iohkx::AnimationData& data)
@@ -202,13 +227,6 @@ static void appends(pugi::xml_node node, const char* name, const char* val)
 	child.append_child(node_pcdata).set_value(val);
 }
 
-static void appendAnnotation(pugi::xml_node node, const Annotation& annotation)
-{
-	xml_node child = node.append_child(NODE_ANNOTATION);
-	appendi(child, ATTR_FRAME, annotation.frame);
-	appends(child, ATTR_TEXT, annotation.text.c_str());
-}
-
 static void appendTransform(pugi::xml_node node, const char* name, const hkQsTransform& val)
 {
 	char buf[256];
@@ -229,19 +247,26 @@ static void appendTransform(pugi::xml_node node, const char* name, const hkQsTra
 	child.append_child(node_pcdata).set_value(buf);
 }
 
+static void appendAnnotation(pugi::xml_node node, const Annotation& annotation)
+{
+	xml_node child = node.append_child(NODE_ANNOTATION);
+	appendi(child, ATTR_FRAME, annotation.frame);
+	appends(child, ATTR_TEXT, annotation.text.c_str());
+}
+
 static void appendBone(pugi::xml_node node, Bone* bone)
 {
 	assert(bone);
 	xml_node child = node.append_child(NODE_BONE);
 	child.append_attribute("name").set_value(bone->name.c_str());
 
-	appendTransform(child, ATTR_REFPOSE, bone->refPoseObj);
+	appendTransform(child, ATTR_REFERENCE, bone->refPoseObj);
 
 	for (unsigned int i = 0; i < bone->children.size(); i++)
 		appendBone(child, bone->children[i]);
 }
 
-static void appendTrack(pugi::xml_node node, BoneTrack* track)
+static void appendBoneTrack(pugi::xml_node node, BoneTrack* track)
 {
 	assert(track->target);
 
@@ -254,6 +279,30 @@ static void appendTrack(pugi::xml_node node, BoneTrack* track)
 		char buf[8];
 		sprintf_s(buf, sizeof(buf), "%d", f);
 		appendTransform(child, buf, track->keys[f]);
+	}
+}
+
+static void appendFloatSlot(pugi::xml_node node, Float* slot)
+{
+	assert(slot);
+	xml_node child = node.append_child(NODE_FLOATSLOT);
+	child.append_attribute("name").set_value(slot->name.c_str());
+
+	appendf(child, ATTR_REFERENCE, slot->refValue);
+}
+
+static void appendFloatTrack(pugi::xml_node node, FloatTrack* track)
+{
+	assert(track->target);
+
+	xml_node child = node.append_child(NODE_TRACK);
+	child.append_attribute("name").set_value(track->target->name.c_str());
+	child.append_attribute("type").set_value(TYPE_FLOAT);
+
+	for (int f = 0; f < track->keys.getSize(); f++) {
+		char buf[8];
+		sprintf_s(buf, sizeof(buf), "%d", f);
+		appendf(child, buf, track->keys[f]);
 	}
 }
 
@@ -333,6 +382,10 @@ void iohkx::XMLInterface::write(
 		//for (auto&& add : data.clips[i].addenda) {
 		//	appendBone(skeleton, add.bone.get());
 		//}
+
+		for (int slot = 0; slot < data.clips[i].skeleton->nFloats; slot++) {
+			appendFloatSlot(skeleton, &data.clips[i].skeleton->floats[slot]);
+		}
 	}
 
 	//Animations
@@ -350,10 +403,10 @@ void iohkx::XMLInterface::write(
 
 		//Bone tracks
 		if (clip.rootTransform) {
-			appendTrack(anim, clip.rootTransform);
+			appendBoneTrack(anim, clip.rootTransform);
 		}
 		for (int t = 0; t < clip.nBoneTracks; t++) {
-			appendTrack(anim, &clip.boneTracks[t]);
+			appendBoneTrack(anim, &clip.boneTracks[t]);
 		}
 		//for (auto&& add : data.clips[i].addenda) {
 		//	appendTrack(anim, add.track.get());
@@ -361,17 +414,7 @@ void iohkx::XMLInterface::write(
 
 		//Float tracks
 		for (int t = 0; t < clip.nFloatTracks; t++) {
-			FloatTrack* track = &clip.floatTracks[t];
-			assert(track->target);
-
-			xml_node node = anim.append_child(NODE_TRACK);
-			node.append_attribute("name").set_value(track->target->name.c_str());
-			node.append_attribute("type").set_value(TYPE_FLOAT);
-
-			for (int f = 0; f < track->keys.getSize(); f++) {
-				sprintf_s(buf, sizeof(buf), "%d", f);
-				appendf(node, buf, track->keys[f]);
-			}
+			appendFloatTrack(anim, &clip.floatTracks[t]);
 		}
 
 		//Annotations

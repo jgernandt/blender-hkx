@@ -82,6 +82,7 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 
 	//Process float data
 	for (int i = 0; i < nFloats; i++) {
+		skeleton->floats[i].index = i;
 		skeleton->floats[i].name = src->m_floatSlots[i].cString();
 		skeleton->floats[i].refValue = src->m_referenceFloats[i];
 	}

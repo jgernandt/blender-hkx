@@ -1,10 +1,8 @@
 #pragma once
 #include "common.h"
-#include "HavokEngine.h"
 
 namespace iohkx
 {
-
 	class AnimationDecoder
 	{
 	public:
@@ -22,7 +20,6 @@ namespace iohkx
 		struct CompressionMap;
 		struct DecompressionMap;
 
-		void annotate(hkaAnimation* animation);
 		void mapPairedComp(
 			hkaAnimationBinding* binding,
 			hkaAnimation* animation,

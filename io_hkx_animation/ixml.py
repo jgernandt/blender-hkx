@@ -6,18 +6,21 @@ import mathutils
 TAG_ANIMATION = "animation"
 TAG_ANNOTATION = "annotation"
 TAG_BONE = "bone"
+TAG_BOOL = "bone"
 TAG_FLOAT = "float"
+TAG_FLOATSLOT = "slot"
 TAG_INT = "int"
 TAG_SKELETON = "skeleton"
 TAG_STRING = "string"
 TAG_TRACK = "track"
 TAG_TRANSFORM = "transform"
 
+ATTR_ADDITIVE = "additive"
+ATTR_FRAME = "frame"
 ATTR_FRAMES = "frames"
 ATTR_FRAMERATE = "frameRate"
-ATTR_ADDITIVE = "additive"
+ATTR_REFERENCE = "ref"
 ATTR_SKELETON = "skeleton"
-ATTR_FRAME = "frame"
 ATTR_TEXT = "text"
 
 CURRENT_VERSION = "1"
@@ -151,6 +154,8 @@ class FloatKeyInterface(KeyInterface):
     
     def __init__(self, doc, node):
         super().__init__(doc, node)
+        if node.firstChild.data == "":
+            node.firstChild.data = "0.0"
         self.value = float(node.firstChild.data)
     
     def set_value(self, value):
@@ -184,9 +189,6 @@ class FloatTrackInterface(TrackInterface):
         
         self.datatype = Track.FLOAT
         self.keytype = FloatKeyInterface
-    
-    def add_key(self, index):
-        return super().add_key(index)
 
 
 class TransformTrackInterface(TrackInterface):
@@ -196,9 +198,6 @@ class TransformTrackInterface(TrackInterface):
         
         self.datatype = Track.TRANSFORM
         self.keytype = TransformKeyInterface
-    
-    def add_key(self, index):
-        return super().add_key(index)
 
 
 class AnimationInterface(DOMInterface):
@@ -256,24 +255,44 @@ class AnimationInterface(DOMInterface):
 
 class SkeletonInterface(DOMInterface):
     name: str
+    #reference: undefined
     
     def __init__(self, doc, node):
         super().__init__(doc, node)
         
         self.name = node.getAttribute("name")
+        
+        isbone = node.tagName == TAG_BONE
+        
+        if isbone:
+            tag = TAG_TRANSFORM
+        else:
+            tag = TAG_FLOAT
+        
+        #find reference element
+        e = None
+        for child in self.get_elements(tag):
+            if child.getAttribute("name") == ATTR_REFERENCE:
+                e = child
+        
+        if e:
+            if isbone:
+                self.reference = unpacktransform(e.firstChild.data)
+            else:
+                self.reference = float(e.firstChild.data)
+        #create if missing
+        else:
+            e = self.add_element(tag, {"name" : ATTR_REFERENCE})
+            e.appendChild(self.doc.createTextNode(""))
+            self.reference = None
     
     def bones(self):
         for node in self.get_elements(tagName=TAG_BONE):
             yield SkeletonInterface(self.doc, node)
     
-    def refpose(self):
-        for node in self.get_elements(tagName=TAG_TRANSFORM):
-            assert len(node.childNodes) == 1, "unexpected text"
-            assert node.firstChild.nodeType == node.TEXT_NODE, "unexpected node"
-            return unpacktransform(node.firstChild.data)
-        
-        #Transform must not be missing
-        raise RuntimeError("Bone missing reference pose")
+    def floats(self):
+        for node in self.get_elements(tagName=TAG_FLOATSLOT):
+            yield SkeletonInterface(self.doc, node)
 
 
 class DocumentInterface(DOMInterface):
@@ -310,7 +329,7 @@ class DocumentInterface(DOMInterface):
         return ianim
     
     def set_additive(self, value):
-        self._set_param(TAG_STRING, ATTR_ADDITIVE, value)
+        self._set_param(TAG_BOOL, ATTR_ADDITIVE, value)
     
     def set_frames(self, value):
         self._set_param(TAG_INT, ATTR_FRAMES, value)

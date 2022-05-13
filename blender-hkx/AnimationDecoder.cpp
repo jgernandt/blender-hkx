@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "AnimationDecoder.h"
+#include "TrackMapper.h"
 
 constexpr int FRAME_RATE = 30;
 
@@ -168,6 +169,46 @@ static std::pair<int, Bone*> findBone(const char* name, const std::vector<Clip>&
 	return { -1, nullptr };
 }
 
+static bool mapBonesIfMissing(int n, Clip& clip, hkArray<hkInt16>& target)
+{
+	target.clear();
+	bool result = n < clip.skeleton->nBones;
+	if (result) {
+		assert(n == clip.nBoneTracks);
+		target.reserve(n);
+
+		//sort by bone index
+		for (int i = 0; i < clip.skeleton->nBones; i++) {
+			if (clip.boneMap[i]) {
+				assert(clip.boneMap[i]->target->index == i);//or we messed up the map
+				target.pushBack(i);
+			}
+		}
+		assert(target.getSize() == n);
+	}
+	return result;
+}
+
+static bool mapFloatsIfMissing(int n, Clip& clip, hkArray<hkInt16>& target)
+{
+	target.clear();
+	bool result = n < clip.skeleton->nFloats;
+	if (result) {
+		assert(n == clip.nFloatTracks);
+		target.reserve(n);
+
+		//sort by skeleton order
+		for (int i = 0; i < clip.skeleton->nFloats; i++) {
+			if (clip.floatMap[i]) {
+				assert(clip.floatMap[i]->target->index == i);//or we messed up the map
+				target.pushBack(i);
+			}
+		}
+		assert(target.getSize() == n);
+	}
+	return result;
+}
+
 struct iohkx::AnimationDecoder::CompressionMap
 {
 	//bones[i], floats[i] will be the data for output track i
@@ -207,20 +248,6 @@ hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 	if (m_data.frameRate != FRAME_RATE)
 		throw Exception(ERR_INVALID_INPUT, "Unsupported frame rate");
 
-	//We expect either one key per frame, or one single key
-	for (auto&& clip : m_data.clips) {
-		for (int i = 0; i < clip.nBoneTracks; i++) {
-			int nKeys = clip.boneTracks[i].keys.getSize();
-			if (nKeys != m_data.frames && nKeys != 1)
-				throw Exception(ERR_INVALID_INPUT, "Missing keys");
-		}
-		for (int i = 0; i < clip.nFloatTracks; i++) {
-			int nKeys = clip.floatTracks[i].keys.getSize();
-			if (nKeys != m_data.frames && nKeys != 1)
-				throw Exception(ERR_INVALID_INPUT, "Missing keys");
-		}
-	}
-
 	preProcess();
 
 	//Create binding (will be filled out by map*Comp)
@@ -241,6 +268,7 @@ hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 		mapSingleComp(binding, raw, map);
 	}
 
+	//The mapping functions should have determined how many tracks we need
 	int nBones = map.bones.size();
 	int nFloats = map.floats.size();
 
@@ -255,17 +283,19 @@ hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 	raw->m_floats.setSize(nFloats * m_data.frames);
 
 	//Transfer data to raw anim
+
+	//bone tracks
 	for (int i = 0; i < nBones; i++) {
 		BoneTrack* track = map.bones[i].first;
 		if (track) {
-			//Use current key, or last if none
-
 			auto&& keys = track->keys;
 
-			//What would this mean? How would we deal with it?
-			assert(!keys.isEmpty());
+			//What if there are no keys? How would we deal with it?
+			if (keys.isEmpty())
+				throw Exception(ERR_INVALID_INPUT, "Track with no keys");
 
 			for (int f = 0; f < m_data.frames; f++) {
+				//Use current key, or last if none
 				raw->m_transforms[i + f * nBones] = keys.getSize() > f ? keys[f] : keys.back();
 			}
 		}
@@ -283,22 +313,24 @@ hkRefPtr<hkaAnimationContainer> iohkx::AnimationDecoder::compress()
 		}
 		//else ignore
 	}
+	//float tracks
 	for (int i = 0; i < nFloats; i++) {
 		FloatTrack* track = map.floats[i];
 		if (track) {
-			//Use current key, or last if none
-
 			auto&& keys = track->keys;
 
-			//What would this mean? How would we deal with it?
-			assert(!keys.isEmpty());
+			//What if there are no keys? How would we deal with it?
+			if (keys.isEmpty())
+				throw Exception(ERR_INVALID_INPUT, "Track with no keys");
 
 			for (int f = 0; f < m_data.frames; f++) {
+				//Use current key, or last if none
 				raw->m_floats[i + f * nFloats] = keys.getSize() > f ? keys[f] : keys.back();
 			}
 		}
 		//else ignore (never fill)
 	}
+	//annotations
 	for (int i : { 0, 1 }) {
 		if (map.annotationTracks[i] != -1) {
 			for (auto&& anno : m_data.clips[i].annotations) {
@@ -452,14 +484,16 @@ void iohkx::AnimationDecoder::mapPairedComp(
 	//and any addenda
 	//nBones += primary.addenda.size() + secondary.addenda.size();
 
-	//Some paired anims have float tracks, but I don't know how to interpret that.
-	//Leave them for now.
-	int nFloats = 0;
+	//Some paired anims have float track. Let's assume they belong to the primary actor.
+	int nFloats = primary.nFloatTracks;
 
 	//Fill out the targets and annotation names
 	map.bones.resize(nBones);
+	map.floats.resize(nFloats);
 	animation->m_annotationTracks.setSize(nBones);
 	auto&& annotations = animation->m_annotationTracks;
+
+	//Bones and annotations
 
 	//PairedRoot (has neither track nor bone)
 	map.bones[0].first = nullptr;
@@ -517,6 +551,15 @@ void iohkx::AnimationDecoder::mapPairedComp(
 	//}
 
 	assert(current == nBones);
+
+	//Floats (ignore secondary actor)
+	bool missingFloats = mapFloatsIfMissing(nFloats, primary, 
+		binding->m_floatTrackToFloatSlotIndices);
+
+	for (int i = 0; i < nFloats; i++) {
+		int index = missingFloats ? binding->m_floatTrackToFloatSlotIndices[i] : i;
+		map.floats[i] = primary.floatMap[index];
+	}
 }
 
 void iohkx::AnimationDecoder::mapSingleComp(
@@ -543,7 +586,10 @@ void iohkx::AnimationDecoder::mapSingleComp(
 	assert(nBones <= clip.skeleton->nBones && nFloats <= clip.skeleton->nFloats);
 
 	//If bones are missing, we need the mapping from clip.boneTracks to bone index.
-	if (nBones < clip.skeleton->nBones) {
+	bool missingBones = mapBonesIfMissing(nBones, clip, binding->m_transformTrackToBoneIndices);
+	bool missingFloats = mapFloatsIfMissing(nFloats, clip, binding->m_floatTrackToFloatSlotIndices);
+
+	/*if (missingBones) {
 		assert(nBones == clip.nBoneTracks);
 		binding->m_transformTrackToBoneIndices.reserve(nBones);
 
@@ -557,7 +603,7 @@ void iohkx::AnimationDecoder::mapSingleComp(
 		assert(binding->m_transformTrackToBoneIndices.getSize() == nBones);
 	}
 	//Same with floats
-	if (nFloats < clip.skeleton->nFloats) {
+	if (missingFloats) {
 		assert(nFloats == clip.nFloatTracks);
 		binding->m_floatTrackToFloatSlotIndices.reserve(nFloats);
 
@@ -569,30 +615,32 @@ void iohkx::AnimationDecoder::mapSingleComp(
 			}
 		}
 		assert(binding->m_floatTrackToFloatSlotIndices.getSize() == nFloats);
-	}
+	}*/
 
 	map.bones.resize(nBones, { nullptr, nullptr });
 	map.floats.resize(nFloats, nullptr);
 
 	//Fill out bones and floats in whatever order we want it in the final animation,
 	//i.e. in skeleton order
-	
-	//---only correct if nBones == skeleton->nBones! Fix later.
-	assert(nBones == clip.skeleton->nBones);
-	map.annotationTracks[0] = 0;
 	for (int i = 0; i < nBones; i++) {
-		map.bones[i].first = clip.boneMap[i];//may be null
-		map.bones[i].second = &clip.skeleton->bones[i];
+		int index = missingBones ? binding->m_transformTrackToBoneIndices[i] : i;
+		map.bones[i].first = clip.boneMap[index];//may be null
+		map.bones[i].second = &clip.skeleton->bones[index];
+
+		if (index == 0) {
+			//This track points to the annotation bone
+			map.annotationTracks[0] = i;
+		}
 	}
 	for (int i = 0; i < nFloats; i++) {
-		map.floats[i] = clip.floatMap[i];//may be null
+		int index = missingFloats ? binding->m_floatTrackToFloatSlotIndices[i] : i;
+		map.floats[i] = clip.floatMap[index];//may be null
 	}
-	//---
 
 	//Initialise annotation tracks
 	animation->m_annotationTracks.setSize(nBones);
 	for (int i = 0; i < nBones; i++)
-		//the strings are not initialised
+		//(the strings are not initialised)
 		animation->m_annotationTracks[i].m_trackName = "";
 }
 
@@ -619,15 +667,17 @@ void iohkx::AnimationDecoder::mapPaired(
 		return;
 
 	m_data.clips.resize(2);
+	Clip& primary = m_data.clips[0];
+	Clip& secondary = m_data.clips[1];
 
 	//If there is only one skeleton, we use it for both clips
 	if (skeletons.size() == 1) {
-		m_data.clips[0].skeleton = skeletons[0];
-		m_data.clips[1].skeleton = skeletons[0];
+		primary.skeleton = skeletons[0];
+		secondary.skeleton = skeletons[0];
 	}
 	else {
-		m_data.clips[0].skeleton = skeletons[0];
-		m_data.clips[1].skeleton = skeletons[1];
+		primary.skeleton = skeletons[0];
+		secondary.skeleton = skeletons[1];
 	}
 
 	//Identify target bone by annotations
@@ -661,7 +711,7 @@ void iohkx::AnimationDecoder::mapPaired(
 					maps[pair.first].push_back({ i, pair.second });
 
 					//the annotations are in bone 0 of the primary skeleton (?)
-					if (pair.second == &m_data.clips[0].skeleton->bones[0]) {
+					if (pair.second == &primary.skeleton->bones[0]) {
 						map.annotationClip = 0;
 						map.annotationTrack = i;
 					}
@@ -702,9 +752,9 @@ void iohkx::AnimationDecoder::mapPaired(
 
 		//Some paired anims have float tracks, but I don't know how to interpret that.
 		//Leave them for now.
-		m_data.clips[i].nFloatTracks = 0;
-		m_data.clips[i].floatTracks = nullptr;
-		m_data.clips[i].floatMap.resize(m_data.clips[i].skeleton->nFloats, nullptr);
+		//m_data.clips[i].nFloatTracks = 0;
+		//m_data.clips[i].floatTracks = nullptr;
+		//m_data.clips[i].floatMap.resize(m_data.clips[i].skeleton->nFloats, nullptr);
 
 		for (int j = 0; j < nTracks; j++) {
 			//Set the track targets
@@ -714,6 +764,43 @@ void iohkx::AnimationDecoder::mapPaired(
 
 			//Final mapping
 			map.bones[maps[i][j].first] = track;
+		}
+	}
+
+	//Some paired anims have float tracks. Let's assume they belong to the primary actor,
+	//if there are slots for them.
+
+	int nFloats = map.floats.size();
+
+	//Does the number of tracks match the number of slots?
+	bool validFloats = nFloats == primary.skeleton->nFloats;
+
+	//If not, do we have a valid mapping?
+	if (!validFloats && binding->m_floatTrackToFloatSlotIndices.getSize() == nFloats) {
+
+		validFloats = true;
+
+		//make sure no index exceeds the number of slots
+		for (int i = 0; i < nFloats; i++) {
+			if (binding->m_floatTrackToFloatSlotIndices[i] >= primary.skeleton->nFloats) {
+				validFloats = false;
+				break;
+			}
+		}
+	}
+
+	if (validFloats) {
+		primary.nFloatTracks = nFloats;
+		primary.floatTracks = new FloatTrack[nFloats];
+		primary.floatMap.resize(primary.skeleton->nFloats, nullptr);
+
+		bool missingFloats = nFloats != primary.skeleton->nFloats;
+		for (int i = 0; i < nFloats; i++) {
+			int index = missingFloats ? binding->m_floatTrackToFloatSlotIndices[i] : i;
+
+			primary.floatTracks[i].target = &primary.skeleton->floats[index];
+
+			map.floats[i] = &primary.floatTracks[i];
 		}
 	}
 }

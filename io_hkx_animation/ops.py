@@ -229,7 +229,14 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         return {'FINISHED'}
     
     def importfloat(self, itrack, action):
-        pass
+        #create f-curve
+        f = action.fcurves.new('["%s"]' % itrack.name)
+        
+        #add keys
+        for key in itrack.keys():
+            f.keyframe_points.insert(key.frame, key.value, options={'FAST'})
+        
+        f.update()
     
     def importtransform(self, itrack, action):
         
@@ -302,7 +309,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         #import markers
         for annotation in ianim.annotations():
-            print("Marker %s at %s" % (annotation.text, str(annotation.frame)))
             marker = action.pose_markers.new(annotation.text)
             marker.frame = annotation.frame
         
@@ -338,7 +344,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         bone.length = 1.0
         
         #transform
-        loc, rot, scl = ibone.refpose()
+        loc, rot, scl = ibone.reference
         loc /= self.length_scale
         mat = mathutils.Matrix.LocRotScale(loc, rot, scl)
         if parent:
@@ -384,6 +390,10 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         #end edit
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+        
+        #add float slots (custom props)
+        for ifloat in iskeleton.floats():
+            armature[ifloat.name] = ifloat.reference
         
         #display settings (optional?)
         data.display_type = 'STICK'
@@ -558,6 +568,18 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         
         tracks = [ianim.add_transform_track(bone.name) for bone in bones]
         
+        #For float slots we only look at current Action.
+        #This is somewhat inconsistent (bones use final pose).
+        #Probably not a big deal, though. This feature seems to be mostly unused.
+        action = armature.animation_data.action if armature.animation_data else None
+        #we'll locate all properties that are keyframed in the current action
+        slots = []
+        if action:
+            for prop in armature.keys():
+                #save this property if it has an FCurve
+                if action.fcurves.find('["%s"]' % prop):
+                    slots.append(ianim.add_float_track(prop))
+        
         #loop over frames, add key for each track
         current_frame = context.scene.frame_current
         for i in range(self.frames):
@@ -569,10 +591,10 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                 context.scene.frame_set(int(frame), subframe=subframe)
             
             for bone, track in zip(bones, tracks):
-                #pull current transform
+                #read current object-space transform
                 loc, rot, scl = bone.matrix.decompose()
                 
-                #coordinate transforms
+                #rotate to output frame
                 mat = mathutils.Matrix.LocRotScale(loc, rot, scl).to_4x4() @ self.framerot
                 
                 #Transform to parent-bone space
@@ -588,11 +610,19 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                 
                 loc, rot, scl = mat.decompose()
                 
+                #rescale length
                 loc *= self.length_scale
                 
                 #add key
                 key = track.add_key(i)
                 key.set_value(loc, rot, scl)
+            
+            for slot in slots:
+                print("Adding key: " + str(i))
+                key = slot.add_key(i)
+                print("Slot name: " + slot.name)
+                print("get rturned: " + str(armature.get(slot.name)))
+                key.set_value(armature.get(slot.name))
         
         #restore state
         context.scene.frame_set(current_frame)
