@@ -48,6 +48,9 @@
     <ClCompile Include="..\..\pugixml\src\pugixml.cpp">
       <Filter>Source Files\pugixml</Filter>
     </ClCompile>
+    <ClCompile Include="TrackMapper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AnimationDecoder.h">
@@ -76,6 +79,9 @@
     </ClInclude>
     <ClInclude Include="..\..\pugixml\src\pugixml.hpp">
       <Filter>Header Files\pugixml</Filter>
+    </ClInclude>
+    <ClInclude Include="TrackMapper.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

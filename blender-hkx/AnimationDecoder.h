@@ -17,26 +17,6 @@ namespace iohkx
 		const AnimationData& get() const { return m_data; }
 
 	private:
-		struct CompressionMap;
-		struct DecompressionMap;
-
-		void mapPairedComp(
-			hkaAnimationBinding* binding,
-			hkaAnimation* animation,
-			CompressionMap& map);
-		void mapSingleComp(
-			hkaAnimationBinding* binding,
-			hkaAnimation* animation,
-			CompressionMap& map);
-		void mapPaired(
-			hkaAnimationBinding* binding,
-			const std::vector<Skeleton*>& skeletons,
-			DecompressionMap& map);
-		void mapSingle(
-			hkaAnimationBinding* binding, 
-			const std::vector<Skeleton*>& skeletons, 
-			DecompressionMap& map);
-
 		void removeDuplicateKeys();
 		void preProcess();
 

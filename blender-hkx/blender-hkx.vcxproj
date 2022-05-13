@@ -113,6 +113,7 @@
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <ClCompile Include="SkeletonLoader.cpp" />
+    <ClCompile Include="TrackMapper.cpp" />
     <ClCompile Include="XMLInterface.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -124,6 +125,7 @@
     <ClInclude Include="HKXInterface.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="SkeletonLoader.h" />
+    <ClInclude Include="TrackMapper.h" />
     <ClInclude Include="XMLInterface.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
