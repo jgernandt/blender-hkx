@@ -8,6 +8,7 @@ import bpy_extras;
 import mathutils
 
 from io_hkx_animation.ixml import DocumentInterface
+from io_hkx_animation.ixml import ReferenceFrame
 from io_hkx_animation.ixml import Track
 from io_hkx_animation.prefs import EXEC_NAME
 from io_hkx_animation.props import AXES
@@ -568,6 +569,8 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         ianim = document.add_animation(str(len(document.animations)))
         #name of skeleton = object name
         ianim.set_skeleton_name(armature.data.iohkx.skeleton_path)
+        #reference frame = object
+        ianim.set_reference_frame(ReferenceFrame.OBJECT)
         
         #use the name override (if any) as track name
         override = lambda pbone: pbone.bone.iohkx.hkx_name if pbone.bone.iohkx.hkx_name != "" else pbone.name

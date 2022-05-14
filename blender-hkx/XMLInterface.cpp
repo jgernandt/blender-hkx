@@ -26,6 +26,7 @@ constexpr const char* ATTR_FRAMERATE = "frameRate";
 constexpr const char* ATTR_ADDITIVE = "additive";
 constexpr const char* ATTR_SKELETON = "skeleton";
 constexpr const char* ATTR_REFERENCE = "ref";
+constexpr const char* ATTR_REFERENCE_FRAME = "referenceFrame";
 constexpr const char* ATTR_FRAME = "frame";
 constexpr const char* ATTR_TEXT = "text";
 
@@ -370,6 +371,8 @@ void iohkx::XMLInterface::write(
 		char buf[8];
 		sprintf_s(buf, sizeof(buf), "%d", i);
 		skeleton.append_attribute("name").set_value(buf);
+
+		appends(skeleton, ATTR_REFERENCE_FRAME, REF_INDEX[REF_OBJECT]);
 		
 		appendBone(skeleton, data.clips[i].skeleton->rootBone);
 
@@ -394,6 +397,7 @@ void iohkx::XMLInterface::write(
 		anim.append_attribute("name").set_value(buf);
 
 		appends(anim, ATTR_SKELETON, clip.skeleton->name.c_str());
+		appends(anim, ATTR_REFERENCE_FRAME, REF_INDEX[clip.refFrame]);
 
 		//Bone tracks
 		if (clip.rootTransform) {

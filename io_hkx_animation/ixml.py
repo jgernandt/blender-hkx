@@ -20,11 +20,18 @@ ATTR_FRAME = "frame"
 ATTR_FRAMES = "frames"
 ATTR_FRAMERATE = "frameRate"
 ATTR_REFERENCE = "ref"
+ATTR_REFERENCE_FRAME = "referenceFrame"
 ATTR_SKELETON = "skeleton"
 ATTR_TEXT = "text"
 
 CURRENT_VERSION = "1"
 SUPPORTED_VERSIONS = {"1"}
+
+class ReferenceFrame(Enum):
+    UNDEFINED = ""
+    OBJECT = "OBJECT"
+    BONE = "BONE"
+    PARENT = "PARENT_BONE"
 
 class Track(Enum):
     FLOAT = TAG_FLOAT
@@ -72,6 +79,29 @@ class DOMInterface():
         for node in self.node.childNodes:
             if node.nodeType == node.ELEMENT_NODE and (tagName == "" or node.tagName == tagName):
                 yield node
+    
+    def get_string_data(self, name=""):
+        for child in self.get_elements(tagName=TAG_STRING):
+            if child.getAttribute("name") == name:
+                #we assume the text node already exists. stupid?
+                return child.firstChild.data
+                
+        #else return None? empty string? create the element?
+        return ""
+    
+    def set_string_data(self, name="", value=""):
+        #find string element with name == name, or create if missing
+        for child in self.get_elements(tagName=TAG_STRING):
+            if child.getAttribute("name") == name:
+                #we assume the text node already exists. stupid?
+                child.firstChild.data = value
+                return
+        
+        #missing element, create it
+        e = self.doc.createElement(TAG_STRING)
+        e.setAttribute("name", name)
+        e.appendChild(self.doc.createTextNode(value))
+        self.node.appendChild(e)
 
 
 class AnnotationInterface(DOMInterface):
@@ -204,13 +234,6 @@ class AnimationInterface(DOMInterface):
     
     def __init__(self, doc, node):
         super().__init__(doc, node)
-        
-        #find skeleton name
-        self._skeleton = None
-        for child in self.get_elements(tagName=TAG_STRING):
-            if child.getAttribute("name") == ATTR_SKELETON:
-                self._skeleton = child
-                break
     
     def add_annotation(self, frame, text):
         e = self.add_element(TAG_ANNOTATION, {})
@@ -227,18 +250,12 @@ class AnimationInterface(DOMInterface):
         e = self.add_element(TAG_TRACK, {"name" : name, "type" : Track.TRANSFORM.value})
         return TransformTrackInterface(self.doc, e)
     
+    def set_reference_frame(self, ref):
+        #ref should be a ReferenceFrame
+        self.set_string_data(name=ATTR_REFERENCE_FRAME, value=ref.value)
+    
     def set_skeleton_name(self, name):
-        if self._skeleton:
-            #replace this element's child by a new text node
-            value = self.doc.createTextNode(name)
-            self._skeleton.replaceChild(self._skeleton.firstChild, value)
-            pass
-        else:
-            #create new element and text node
-            e = self.doc.createElement(TAG_STRING)
-            e.setAttribute("name", ATTR_SKELETON)
-            e.appendChild(self.doc.createTextNode(name))
-            self.node.appendChild(e)
+        self.set_string_data(name=ATTR_SKELETON, value=name)
     
     def annotations(self):
         for node in self.get_elements(tagName=TAG_ANNOTATION):

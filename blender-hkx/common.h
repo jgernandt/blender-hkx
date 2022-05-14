@@ -27,6 +27,21 @@ namespace iohkx
 		LAYOUT_AMD64
 	};
 
+	enum ReferenceFrame
+	{
+		REF_UNDEFINED,
+		REF_OBJECT,
+		REF_BONE,
+		REF_PARENT_BONE,
+	};
+
+	constexpr const char* REF_INDEX[]{
+		"",
+		"OBJECT",
+		"BONE",
+		"PARENT_BONE",
+	};
+
 	//Name of the dummy bone used to represent skeleton transforms
 	constexpr const char* ROOT_BONE = "NPC";
 
@@ -96,6 +111,8 @@ namespace iohkx
 	struct Clip
 	{
 		const Skeleton* skeleton{ nullptr };
+
+		ReferenceFrame refFrame{ REF_UNDEFINED };
 
 		BoneTrack* rootTransform{ nullptr };
 

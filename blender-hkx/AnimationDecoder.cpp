@@ -306,6 +306,9 @@ void iohkx::AnimationDecoder::decompress(
 				map.m_floats[i]->keys[f] = tmpF[i];
 		}
 	}
+	for (auto&& clip : m_data.clips) {
+		clip.refFrame = REF_BONE;
+	}
 
 	removeDuplicateKeys();
 
