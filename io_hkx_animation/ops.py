@@ -629,7 +629,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             for marker in armature.animation_data.action.pose_markers:
                 if marker.frame >= self.frame_interval[0] and marker.frame <= self.frame_interval[1]:
                     #count from frame_interval[0]
-                    i = marker.frame - self.frame_interval[0] + 1
+                    i = (marker.frame - self.frame_interval[0]) / self.framestep + 1
                     ianim.add_annotation(i, marker.name)
 
 
