@@ -335,8 +335,9 @@ class DocumentInterface(DOMInterface):
         self.doc.unlink()
     
     def save(self, filename):
-        with open(filename, 'w') as file:
-            self.doc.writexml(file, addindent='\t', newl='\n', encoding="UTF-8")
+        with open(filename, mode='w', encoding="UTF-8") as file:
+            self.doc.writexml(file, addindent='\t', newl='\n', encoding="UTF-8")#debug mode
+            #self.doc.writexml(file, encoding="UTF-8")
     
     def add_animation(self, name):
         e = self.add_element(TAG_ANIMATION, {"name" : name})

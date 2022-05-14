@@ -150,13 +150,20 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             tmp_file = _tmpfilename(self.filepath, context.preferences)
             skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
             args = '"%s" unpack "%s" "%s" %s' % (tool, self.filepath, tmp_file, skels)
-            res = subprocess.run(args)
             
-            #throw if the converter returned non-zero
-            res.check_returncode()
-            
-            #Load the xml
-            doc = DocumentInterface.open(tmp_file)
+            try:
+                res = subprocess.run(args)
+                
+                #throw if the converter returned non-zero
+                res.check_returncode()
+                
+                #Load the xml
+                doc = DocumentInterface.open(tmp_file)
+                
+            finally:
+                if os.path.exists(tmp_file):
+                    os.remove(tmp_file)
+                
             
             #Look up all selected armatures
             selected, armatures = self.get_selected(context)
@@ -221,11 +228,6 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        finally:
-            #delete tmp file
-            #os.remove(tmp_file)
-            #(might also want to look at the tempfile module)
-            pass
         
         self.report({'INFO'}, "Imported %s successfully" % self.filepath)
         return {'FINISHED'}
@@ -520,37 +522,35 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             context.view_layer.objects.active = active
             
             if len(doc.animations) != 0:
-                #write xml
                 tmp_file = _tmpfilename(self.filepath, context.preferences)
-                doc.save(tmp_file)
+                try:
+                    #write xml
+                    doc.save(tmp_file)
+                    
+                    #invoke converter
+                    if len(doc.animations) == 1:
+                        skels = '"%s"' % (self.primary_skeleton)
+                    else:
+                        skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
+                    
+                    if self.output_format == 'LE':
+                        fmt = "WIN32"
+                    else:
+                        fmt = "AMD64"
+                    
+                    args = '"%s" pack %s "%s" "%s" %s' % (tool, fmt, tmp_file, self.filepath, skels)
+                    
+                    res = subprocess.run(args)
+                    
+                    #throw if the converter returned non-zero
+                    res.check_returncode()
                 
-                #invoke converter
-                if len(doc.animations) == 1:
-                    skels = '"%s"' % (self.primary_skeleton)
-                else:
-                    skels = '"%s" "%s"' % (self.primary_skeleton, self.secondary_skeleton)
-                
-                if self.output_format == 'LE':
-                    fmt = "WIN32"
-                else:
-                    fmt = "AMD64"
-                
-                args = '"%s" pack %s "%s" "%s" %s' % (tool, fmt, tmp_file, self.filepath, skels)
-                
-                print(args)
-                res = subprocess.run(args)
-                
-                #throw if the converter returned non-zero
-                res.check_returncode()
+                finally:
+                    os.remove(tmp_file)
             
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        finally:
-            #delete tmp file
-            #os.remove(tmp_file)
-            #(might also want to look at the tempfile module)
-            pass
         
         self.report({'INFO'}, "Exported %s successfully" % self.filepath)
         return {'FINISHED'}
@@ -623,10 +623,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                 key.set_value(loc, rot, scl)
             
             for slot in slots:
-                print("Adding key: " + str(i))
                 key = slot.add_key(i)
-                print("Slot name: " + slot.name)
-                print("get rturned: " + str(armature.get(slot.name)))
                 key.set_value(armature.get(slot.name))
         
         #restore state
