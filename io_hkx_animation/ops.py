@@ -196,17 +196,17 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             
             #this is now guaranteed to be one of our armatures
             active_obj = context.view_layer.objects.active
-                
-            #create new actions
-            actions = [self.import_animation(i, context) for i in doc.animations]
             
             #If there are more actions than armatures, duplicate active armature
-            while len(actions) > len(armatures):
+            while len(doc.animations) > len(armatures):
                 #append a duplicate of armature[0]
                 armatures.append(active_obj.copy())
                 #they can share data, right?
                 #armatures[-1].data = armatures[-1].data.copy()
                 context.scene.collection.objects.link(armatures[-1])
+                
+            #create new actions
+            actions = [self.import_animation(i, arma) for i, arma in zip(doc.animations, armatures)]
             
             #add animation data if missing
             for arma in armatures:
@@ -226,6 +226,7 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
             #(might also want to look at the tempfile module)
             pass
         
+        self.report({'INFO'}, "Imported %s successfully" % self.filepath)
         return {'FINISHED'}
     
     def find_connected(self, bone, children):
@@ -252,18 +253,23 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         #we found no connected child
         return None, None
     
-    def import_animation(self, ianim, context):
+    def import_animation(self, ianim, armature):
         
         #create a new action, named as file
         d, name = os.path.split(self.filepath)
         root, ext = os.path.splitext(name)
         action = bpy.data.actions.new(name=root)
-        #armature.animation_data.action = action
+        
+        #look for bone name overrides
+        overrides = {}
+        for bone in armature.data.bones:
+            if bone.iohkx.hkx_name != "":
+                overrides[bone.iohkx.hkx_name] = bone.name
         
         #import the tracks
         for track in ianim.tracks():
             if track.datatype == Track.TRANSFORM:
-                self.import_transform(track, action)
+                self.import_transform(track, action, overrides.get(track.name, track.name))
             elif track.datatype == Track.FLOAT:
                 self.import_float(track, action)
         
@@ -347,24 +353,24 @@ class HKXImport(HKXIO, bpy_extras.io_utils.ImportHelper):
         
         return armature
     
-    def import_transform(self, itrack, action):
+    def import_transform(self, itrack, action, name):
         
         #create ActionGroup
-        group = action.groups.new(itrack.name)
+        group = action.groups.new(name)
         
         #create new f-curves
-        loc_x = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=0, action_group=itrack.name)
-        loc_y = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=1, action_group=itrack.name)
-        loc_z = action.fcurves.new('pose.bones["%s"].location' % itrack.name, index=2, action_group=itrack.name)
+        loc_x = action.fcurves.new('pose.bones["%s"].location' % name, index=0, action_group=name)
+        loc_y = action.fcurves.new('pose.bones["%s"].location' % name, index=1, action_group=name)
+        loc_z = action.fcurves.new('pose.bones["%s"].location' % name, index=2, action_group=name)
         
-        rot_w = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=0, action_group=itrack.name)
-        rot_x = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=1, action_group=itrack.name)
-        rot_y = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=2, action_group=itrack.name)
-        rot_z = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % itrack.name, index=3, action_group=itrack.name)
+        rot_w = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % name, index=0, action_group=name)
+        rot_x = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % name, index=1, action_group=name)
+        rot_y = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % name, index=2, action_group=name)
+        rot_z = action.fcurves.new('pose.bones["%s"].rotation_quaternion' % name, index=3, action_group=name)
         
-        scl_x = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=0, action_group=itrack.name)
-        scl_y = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=1, action_group=itrack.name)
-        scl_z = action.fcurves.new('pose.bones["%s"].scale' % itrack.name, index=2, action_group=itrack.name)
+        scl_x = action.fcurves.new('pose.bones["%s"].scale' % name, index=0, action_group=name)
+        scl_y = action.fcurves.new('pose.bones["%s"].scale' % name, index=1, action_group=name)
+        scl_z = action.fcurves.new('pose.bones["%s"].scale' % name, index=2, action_group=name)
         
         for key in itrack.keys():
             #do axis and scale conversion
@@ -506,7 +512,8 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
             
             #add animations
             for armature in armatures:
-                self.export_animation(doc, armature, context)
+                context.view_layer.objects.active = armature
+                self.export_animation(doc, context)
                 
             #restore active state
             context.view_layer.objects.active = active
@@ -547,14 +554,13 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         self.report({'INFO'}, "Exported %s successfully" % self.filepath)
         return {'FINISHED'}
     
-    def export_animation(self, document, armature, context):
+    def export_animation(self, document, context):
         
-        #activate this armature
-        context.view_layer.objects.active = armature
+        armature = context.view_layer.objects.active
         
         #abort if no bones are selected
-        bones = context.selected_pose_bones_from_active_object
-        if not bones or len(bones) == 0:
+        pbones = context.selected_pose_bones_from_active_object
+        if not pbones or len(pbones) == 0:
             self.report({'WARNING'}, "No bones selected in %s, ignoring" % armature.name)
             return
         
@@ -563,14 +569,13 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         #name of skeleton = object name
         ianim.set_skeleton_name(armature.data.iohkx.skeleton_path)
         
-        tracks = [ianim.add_transform_track(bone.name) for bone in bones]
+        #use the name override (if any) as track name
+        override = lambda pbone: pbone.bone.iohkx.hkx_name if pbone.bone.iohkx.hkx_name != "" else pbone.name
+        tracks = [ianim.add_transform_track(override(bone)) for bone in pbones]
         
-        #For float slots we only look at current Action.
-        #This is somewhat inconsistent (bones use final pose).
-        #Probably not a big deal, though. This feature seems to be mostly unused.
-        action = armature.animation_data.action if armature.animation_data else None
-        #we'll locate all properties that are keyframed in the current action
+        #we'll export only the properties that are keyframed in the current action
         slots = []
+        action = armature.animation_data.action if armature.animation_data else None
         if action:
             for prop in armature.keys():
                 #save this property if it has an FCurve
@@ -587,7 +592,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
                 subframe, frame = math.modf(self.frame_interval[0] + i * self.framestep)
                 context.scene.frame_set(int(frame), subframe=subframe)
             
-            for bone, track in zip(bones, tracks):
+            for bone, track in zip(pbones, tracks):
                 #read current object-space transform
                 loc, rot, scl = bone.matrix.decompose()
                 
@@ -625,7 +630,7 @@ class HKXExport(HKXIO, bpy_extras.io_utils.ExportHelper):
         context.scene.frame_set(current_frame)
         
         #Add annotations from pose markers
-        if armature.animation_data.action:
+        if armature.animation_data and armature.animation_data.action:
             for marker in armature.animation_data.action.pose_markers:
                 if marker.frame >= self.frame_interval[0] and marker.frame <= self.frame_interval[1]:
                     #count from frame_interval[0]
