@@ -52,6 +52,8 @@ namespace iohkx
 		std::string name;
 		//parent-space rest pose
 		hkQsTransform refPose;
+		//inverse of parent-space ref pose
+		hkQsTransform refPoseInv;
 		//object-space rest pose
 		hkQsTransform refPoseObj;
 

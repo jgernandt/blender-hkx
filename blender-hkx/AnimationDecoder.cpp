@@ -279,21 +279,21 @@ void iohkx::AnimationDecoder::decompress(
 	for (int f = 0; f < m_data.frames; f++) {
 		anim->sampleTracks((float)f / FRAME_RATE, tmpT.begin(), tmpF.begin(), HK_NULL);
 
-		//convert tmpT to bone-space
-		if (!m_data.additive) {
-			for (int i = 0; i < tmpT.getSize(); i++) {
-				if (map.m_bones[i]) {
-					assert(map.m_bones[i]->target);
+		//convert tmpT to bone space
+		for (int i = 0; i < tmpT.getSize(); i++) {
+			if (map.m_bones[i]) {
+				assert(map.m_bones[i]->target);
 
-					//inverse of parent-space ref pose
-					hkQsTransform inv;
-					inv.setInverse(map.m_bones[i]->target->refPose);
-					//bone space = inv * tmpT
-					tmpT[i].setMul(inv, tmpT[i]);
+				//if additive, the offset first needs to be applied in parent space
+				if (m_data.additive) {
+					tmpT[i].setMulEq(map.m_bones[i]->target->refPose);
 				}
+
+				//now transform back to the ref space of the bone
+				//bone space = inv * tmpT
+				tmpT[i].setMul(map.m_bones[i]->target->refPoseInv, tmpT[i]);
 			}
 		}
-		//else it is already in bone space!
 
 		hkaSkeletonUtils::normalizeRotations(tmpT.begin(), tmpT.getSize());
 
@@ -364,16 +364,24 @@ void iohkx::AnimationDecoder::preProcess()
 	for (auto&& clip : m_data.clips) {
 		//We expect transforms to be in object space now
 
-		if (m_data.additive) {
+		//if (m_data.additive) {
 			//Transform to bone space
-			for (int f = 0; f < m_data.frames; f++) {
-				objToBone(clip.skeleton->rootBone, clip, f, I, I);
-			}
-		}
-		else {
+		//	for (int f = 0; f < m_data.frames; f++) {
+		//		objToBone(clip.skeleton->rootBone, clip, f, I, I);
+		//	}
+		//}
+		//else {
 			//Transform to parent-bone space
 			for (int f = 0; f < m_data.frames; f++) {
 				objToParent(clip.skeleton->rootBone, clip, f, I, I);
+			}
+		//}
+		if (m_data.additive) {
+			//convert to offset (right-mult by inverse of ref pose)
+			for (int t = 0; t < clip.nBoneTracks; t++) {
+				for (auto&& key : clip.boneTracks[t].keys) {
+					key.setMulEq(clip.boneTracks[t].target->refPoseInv);
+				}
 			}
 		}
 

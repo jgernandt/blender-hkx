@@ -67,13 +67,14 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 		bone.parent = parent;
 		parent->children.push_back(&bone);
 
-		//The children always come after their parents, right?
-		//Otherwise, we'll just have to do this in a separate loop.
-		//(The only incorrect result now would be refPoseObj)
-		assert(iparent < i);
-
 		bone.refPose = src->m_referencePose[i];
-		bone.refPoseObj.setMul(parent->refPoseObj, bone.refPose);
+		bone.refPoseInv.setInverse(bone.refPose);
+	}
+	//in case bones are not ordered by hierarchy, chain transforms in a second loop
+	for (int i = 0; i < nBones; i++) {
+		Bone& bone = skeleton->bones[i];
+		if (bone.parent)
+			bone.refPoseObj.setMul(bone.parent->refPoseObj, bone.refPose);
 	}
 
 	//Create the floats
