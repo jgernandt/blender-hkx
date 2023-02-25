@@ -52,6 +52,7 @@ void iohkx::SkeletonLoader::load(hkaAnimationContainer* animCtnr)
 	skeleton->rootBone->index = -1;
 	skeleton->rootBone->name = "NPC";
 	skeleton->rootBone->refPose.setIdentity();
+	skeleton->rootBone->refPoseInv.setIdentity();
 	skeleton->rootBone->refPoseObj.setIdentity();
 	skeleton->rootBone->parent = NULL;
 
