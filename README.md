@@ -1,5 +1,8 @@
 # blender-hkx
-A Blender addon to import/export Skyrim animations (HKX files)
+An addon for Blender 3.2 to import/export Skyrim animations (HKX files)
+
+## Note
+This addon requires the use of Havok software, which I do not have permission to redistribute. To use it, you need to gain access to the Havok SDK and build the C++ source code yourself.
 
 ## About
 This is a complete solution for importing and exporting Skyrim animations to and from Blender. It can handle:
